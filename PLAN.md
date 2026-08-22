@@ -40,7 +40,8 @@ color pickers / per-level opacity in the panel. Camera feel: pan inertia/momentu
 zoom-glide (spring the zoom); origin off-screen indicator. Projection: isotropic-mode
 toggle (§16; Jacobian §7.4 ready). Grid enhancements (§16): snapping guides; coordinate
 rulers along the frame. *(Adaptive `G` is effectively DONE via the multi-level grid.)*
-Tooling: TypeGPU Runtime Inspector MCP (not wired). Persistence: scene serialization.
+Tooling: TypeGPU Runtime Inspector MCP (not wired). *(Persistence — scene
+serialization — is now BUILT on the fly branch: see Experiments.)*
 
 ## Roadmap (next milestones — §16)
 - **v2 — Rectangles on the grid** *(BUILT & verified):* click-drag a cell-snapped
@@ -80,6 +81,14 @@ Tooling: TypeGPU Runtime Inspector MCP (not wired). Persistence: scene serializa
   is unreachable while locked (exit to use it); `requestPointerLock` needs a real user
   gesture (fails gracefully otherwise — verified). *Feel-tuning (sensitivity/curve/…)
   pending live use; decide whether to merge, keep as a mode, or fold into main.*
+  - **Persistence (built on this branch):** `src/persistence.ts` (+ `persistence.test.ts`)
+    saves the document — rectangles (`{id,x0,y0,x1,y1}` + `nextId`) and camera view — to
+    **localStorage** under a versioned JSON envelope (`grid.scene`, v1). Debounced saves on
+    create/delete, a flush on page-hide/visibility-hidden (captures the latest view),
+    hydrate on boot. Panel "Clear saved scene" button + `window.gridClearScene()`.
+    Tolerant parser (drops bad rects, ignores a bad view, discards unknown versions).
+    Verified round-trip in Chrome. *localStorage is ample for these tiny records; swap to
+    IndexedDB later (behind the same interface) only if scenes get large/binary.*
 
 ## v2 design — rectangles (decided)
 Conceptual model: **a rectangle is a contiguous block of grid cells, given a fill** —
@@ -125,5 +134,6 @@ projected by Φ); no-overlap is an integer AABB test. Stored as a discrete objec
 `tunables.ts` (GRID/COLORS/CAMERA/TAIL/FADE/ADAPTIVE/TINT) · `projection.ts` (Φ/Φ⁻¹ +
 tails) + `projection.test.ts` · `spring.ts` · `pointer.ts` (screen→world helpers) ·
 `interactions.ts` (pan/zoom/glide) · `rectangles.ts` (cell-AABB model + storage buffer
-+ instanced-quad pipeline + Draw-tool rubber-band) · `logger.ts` + `telemetry.ts`
-(observability) · `panel.ts` (settings UI) · `style.css`.
++ instanced-quad pipeline + Draw-tool rubber-band) · `fly.ts` (velocity pointer-lock;
+branch) · `persistence.ts` (localStorage scene save/load; branch) · `logger.ts` +
+`telemetry.ts` (observability) · `panel.ts` (settings UI) · `style.css`.

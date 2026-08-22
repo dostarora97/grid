@@ -28,6 +28,8 @@ type PanelOptions = {
   flyTune: FlyTune;
   /** Enter fly mode (pointer lock) — must run from a user gesture (button click). */
   enterFly: () => void;
+  /** Wipe the saved scene + all rectangles. */
+  clearScene: () => void;
   levelCount: number;
   /** World spacing of level n (for labels). */
   levelSpacing: (n: number) => number;
@@ -76,6 +78,7 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
     setTool,
     flyTune,
     enterFly,
+    clearScene,
     levelCount,
     levelSpacing,
     zoomRange,
@@ -428,6 +431,16 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
   });
   actions.append(resetSettingsBtn, resetViewBtn);
   body.append(actions);
+
+  // --- Scene (persistence) ---
+  const sceneRow = el('div', 'sp-row sp-actions');
+  const clearBtn = el('button', 'sp-btn', 'Clear saved scene');
+  clearBtn.type = 'button';
+  clearBtn.addEventListener('click', () => {
+    clearScene();
+  });
+  sceneRow.append(clearBtn);
+  body.append(sceneRow);
 
   document.body.append(container);
   refresh();

@@ -73,8 +73,10 @@ export function createRectangles(opts: {
   cam: CameraState;
   ui: UiState;
   markDirty: () => void;
+  /** Called after the rectangle set changes (create/delete/clear) — for persistence. */
+  onChange?: () => void;
 }) {
-  const { root, camera, format, canvas, cam, ui, markDirty } = opts;
+  const { root, camera, format, canvas, cam, ui, markDirty, onChange } = opts;
   const rects: Rect[] = [];
   let selectedId: number | null = null;
   let nextId = 1;
@@ -167,6 +169,7 @@ export function createRectangles(opts: {
     }
     sync();
     markDirty();
+    onChange?.();
   }
 
   /** Commit a preview to a real rectangle if it's valid; returns whether it did. */
@@ -178,6 +181,7 @@ export function createRectangles(opts: {
     nextId += 1;
     rects.push(r);
     log.input.debug('rect:create', { rect: r, total: rects.length });
+    onChange?.();
     return true;
   }
 
@@ -269,6 +273,44 @@ export function createRectangles(opts: {
     preview = next;
     sync();
     markDirty();
+  }
+
+  // --- Persistence (see persistence.ts). ---
+
+  /** Snapshot the rectangle set for saving. */
+  function serialize(): { rects: Rect[]; nextId: number } {
+    return { rects: rects.map((r) => ({ ...r })), nextId };
+  }
+
+  /** Replace the rectangle set from a saved snapshot (used on boot). */
+  function load(loaded: Rect[], id: number): void {
+    rects.length = 0;
+    for (const r of loaded) {
+      rects.push({ ...r });
+    }
+    nextId = Math.max(
+      id,
+      rects.reduce((m, r) => Math.max(m, r.id + 1), 1),
+    );
+    selectedId = null;
+    preview = null;
+    strokeAnchor = null;
+    ghostCell = null;
+    sync();
+    markDirty();
+  }
+
+  /** Remove all rectangles (and notify onChange so the empty state persists). */
+  function clear(): void {
+    rects.length = 0;
+    nextId = 1;
+    selectedId = null;
+    preview = null;
+    strokeAnchor = null;
+    ghostCell = null;
+    sync();
+    markDirty();
+    onChange?.();
   }
 
   // --- Pointer handling. Draw tool = rubber-band create; Select tool = click to
@@ -490,5 +532,9 @@ export function createRectangles(opts: {
     commitCenterStroke,
     cancelCenterStroke,
     deleteAtCenter,
+    // Persistence:
+    serialize,
+    load,
+    clear,
   };
 }

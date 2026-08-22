@@ -4,6 +4,7 @@ import { attachInteractions, type CameraState, type UiState } from './interactio
 import { attachFly, type FlyTune } from './fly';
 import { log } from './logger';
 import { createSettingsPanel, type Settings } from './panel';
+import { clearScene, flushScene, loadScene, saveScene } from './persistence';
 import { projectAxis } from './projection';
 import { createRectangles } from './rectangles';
 import { attachInputTelemetry } from './telemetry';
@@ -278,7 +279,55 @@ const rectangles = createRectangles({
   cam,
   ui,
   markDirty,
+  onChange: () => persistScene(),
 });
+
+// --- Persistence: hydrate on boot, save on change + on page-hide (§9/§16). ---
+/** Save the current document (rectangles + camera view), debounced. */
+function persistScene(): void {
+  const { rects, nextId } = rectangles.serialize();
+  saveScene({ rects, nextId, view: { focusX: cam.focusX, focusY: cam.focusY, zoom: cam.zoom } });
+}
+
+const savedScene = loadScene();
+if (savedScene) {
+  rectangles.load(savedScene.rects, savedScene.nextId);
+  if (savedScene.view) {
+    cam.focusX = savedScene.view.focusX;
+    cam.focusY = savedScene.view.focusY;
+    cam.zoom = Math.min(Math.max(savedScene.view.zoom, CAMERA.zoomMin), CAMERA.zoomMax);
+  }
+  markDirty();
+  log.boot.info('scene restored', { rects: savedScene.rects.length });
+}
+
+// Flush the latest state (incl. camera view) when the tab is hidden or closed.
+const flush = (): void => {
+  persistScene();
+  flushScene();
+};
+window.addEventListener('pagehide', flush);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    flush();
+  }
+});
+
+/** Wipe the saved scene and clear the canvas (also exposed as window.gridClearScene). */
+const clearSaved = (): void => {
+  clearScene();
+  rectangles.clear();
+  markDirty();
+};
+declare global {
+  interface Window {
+    /** Clear the saved scene + all rectangles (debugging / reset). */
+    gridClearScene: () => void;
+  }
+}
+if (typeof window !== 'undefined') {
+  window.gridClearScene = clearSaved;
+}
 
 // --- Fly mode (experiment): velocity steering under pointer lock. -------------
 // Live tunables (mutable copy so the panel/console can tune the feel).
@@ -325,6 +374,7 @@ const panel = createSettingsPanel({
   setTool: (t) => setTool(t),
   flyTune,
   enterFly: () => fly.enter(),
+  clearScene: clearSaved,
   levelCount: LEVELS,
   levelSpacing: (n) => GRID.spacing * BASE ** n,
   zoomRange: [CAMERA.zoomMin, CAMERA.zoomMax],
