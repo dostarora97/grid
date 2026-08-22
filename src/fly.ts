@@ -1,13 +1,14 @@
 import type { CameraState, UiState } from './interactions';
 import { log } from './logger';
 import { clampZoom } from './projection';
-import { CAMERA } from './tunables';
+import { CAMERA, GRID } from './tunables';
 
 /** The slice of the rectangles module fly mode drives (all action at the center). */
 type RectFlyApi = {
   setGhost: (on: boolean) => void;
+  stampCenter: () => void;
   beginCenterStroke: () => void;
-  updateCenterStroke: () => void;
+  sizeStrokeByCells: (dx: number, dy: number) => void;
   commitCenterStroke: () => void;
   cancelCenterStroke: () => void;
   deleteAtCenter: () => void;
@@ -50,10 +51,11 @@ export function flyVelocity(
  * integrate into a virtual joystick "stick" (clamped to a radius), whose distance
  * from center sets a continuous pan SPEED (÷zoom → constant on-screen feel). The
  * center cell is always the focus, so drawing happens *there*: left-click stamps
- * a 1×1 (or press-hold-grow a block by flying the far corner in), right-click
- * deletes under the center, Space hard-stops. Everything is the mouse; the only
- * key is the fly toggle. Pan/zoom translate the focus *before* Φ, so the world
- * slides uniformly and re-warps each frame (§8.3) — same math as uniform pan.
+ * a 1×1, right-click deletes under center, Space hard-stops. Holding **Shift** is
+ * a spring-loaded draw: it freezes flying and lets the mouse size a rectangle from
+ * the center anchor (1:1 with the on-screen grid); releasing Shift commits and
+ * resumes flying. Pan/zoom translate the focus *before* Φ, so the world slides
+ * uniformly and re-warps each frame (§8.3) — same math as uniform pan.
  */
 export function attachFly(opts: {
   canvas: HTMLCanvasElement;
@@ -76,7 +78,11 @@ export function attachFly(opts: {
   // hold off-center → keep moving; the physical mouse must travel back to stop.
   let stickX = 0;
   let stickY = 0;
-  let holding = false; // left button down → hold-to-grow stroke in progress
+  // Spring-loaded draw (Shift held): flying freezes and mouse deltas integrate into
+  // a cell offset from the anchor instead of steering. `sizeAccum` is in device px.
+  let sizing = false;
+  let sizeAccumX = 0;
+  let sizeAccumY = 0;
 
   function enter(): void {
     // Must be called from a user gesture. Chrome returns a Promise; older returns
@@ -106,23 +112,42 @@ export function attachFly(opts: {
     }
   }
 
+  /** Begin a spring-loaded draw: freeze flying, anchor at center, reset the offset. */
+  function beginSizing(): void {
+    sizing = true;
+    sizeAccumX = 0;
+    sizeAccumY = 0;
+    rects.beginCenterStroke();
+  }
+
+  /** End a spring-loaded draw: commit (if valid) and resume flying. */
+  function endSizing(commit: boolean): void {
+    if (!sizing) {
+      return;
+    }
+    sizing = false;
+    if (commit) {
+      rects.commitCenterStroke();
+    } else {
+      rects.cancelCenterStroke();
+    }
+  }
+
   function handleLockChange(): void {
     const locked = document.pointerLockElement === canvas;
     ui.locked = locked;
     stickX = 0;
     stickY = 0;
     if (locked) {
-      holding = false;
-      canvas.style.cursor = 'none';
       log.input.debug('fly:enter');
     } else {
-      if (holding) {
-        rects.cancelCenterStroke();
-      }
-      holding = false;
+      endSizing(false); // dropped lock mid-draw → discard
       rects.setGhost(false); // clear any leftover targeting cell
       canvas.style.cursor = '';
       log.input.debug('fly:exit');
+    }
+    if (locked) {
+      canvas.style.cursor = 'none';
     }
     markDirty();
     onLock?.(locked);
@@ -132,34 +157,38 @@ export function attachFly(opts: {
     log.input.warn('fly:lock:rejected (needs a user gesture, or re-lock cooldown after Esc)');
   });
 
-  // Motion under lock: integrate deltas into the stick (screen Y-down → world Y-up).
+  // Motion under lock: while sizing (Shift), integrate deltas into a cell offset
+  // (1:1 with the on-screen grid); otherwise integrate into the steering stick.
   document.addEventListener('mousemove', (e) => {
     if (!ui.locked) {
+      return;
+    }
+    if (sizing) {
+      sizeAccumX += e.movementX;
+      sizeAccumY -= e.movementY; // screen Y-down → world Y-up
+      const pxPerCell = GRID.spacing * cam.zoom; // on-screen cell width at center
+      rects.sizeStrokeByCells(
+        Math.round(sizeAccumX / pxPerCell),
+        Math.round(sizeAccumY / pxPerCell),
+      );
       return;
     }
     stickX = clamp(stickX + e.movementX * tune.sensitivity, -tune.radiusPx, tune.radiusPx);
     stickY = clamp(stickY - e.movementY * tune.sensitivity, -tune.radiusPx, tune.radiusPx);
   });
 
-  // Buttons under lock: left = stamp / hold-to-grow, right = delete under center.
+  // Buttons under lock: left = stamp a 1×1, right = delete under center. (Sized
+  // rectangles are drawn with Shift; buttons are ignored while sizing.)
   canvas.addEventListener('mousedown', (e) => {
-    if (!ui.locked) {
+    if (!ui.locked || sizing) {
       return;
     }
     e.preventDefault();
     if (e.button === 0) {
-      holding = true;
-      rects.beginCenterStroke();
+      rects.stampCenter();
     } else if (e.button === 2) {
       rects.deleteAtCenter();
     }
-  });
-  window.addEventListener('mouseup', (e) => {
-    if (!ui.locked || e.button !== 0 || !holding) {
-      return;
-    }
-    holding = false;
-    rects.commitCenterStroke();
   });
 
   // Zoom about the center while locked (the center is the focus → focus stays fixed).
@@ -176,13 +205,22 @@ export function attachFly(opts: {
     { passive: false },
   );
 
-  // Space = hard stop (zero the stick instantly).
   window.addEventListener('keydown', (e) => {
-    if (ui.locked && e.code === 'Space') {
+    if (!ui.locked) {
+      return;
+    }
+    if (e.key === 'Shift' && !sizing) {
+      beginSizing(); // spring-loaded draw: freeze + size from the center anchor
+    } else if (e.code === 'Space') {
       e.preventDefault();
       stickX = 0;
       stickY = 0;
       log.input.debug('fly:stop');
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    if (ui.locked && e.key === 'Shift') {
+      endSizing(true); // release → commit the sized rectangle, resume flying
     }
   });
 
@@ -191,10 +229,10 @@ export function attachFly(opts: {
     return flyVelocity(stickX, stickY, tune);
   }
 
-  /** Advance fly steering by `dt`s: integrate the focus and update stroke/ghost. */
+  /** Advance fly steering by `dt`s: integrate the focus (unless sizing = frozen). */
   function tick(dt: number): void {
-    if (!ui.locked) {
-      return;
+    if (!ui.locked || sizing) {
+      return; // while Shift-sizing the world is frozen (no pan)
     }
     const [vsx, vsy] = velocity();
     if (vsx !== 0 || vsy !== 0) {
@@ -202,9 +240,6 @@ export function attachFly(opts: {
       cam.focusX += (vsx / cam.zoom) * dt;
       cam.focusY += (vsy / cam.zoom) * dt;
       markDirty();
-    }
-    if (holding) {
-      rects.updateCenterStroke(); // grow the rubber-band while the button is held
     }
   }
 

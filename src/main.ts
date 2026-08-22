@@ -288,7 +288,7 @@ const hud = document.createElement('div');
 hud.className = 'fly-hud';
 hud.innerHTML =
   '<div class="fly-reticle"></div><div class="fly-stick"></div>' +
-  '<div class="fly-hint">fly — move to steer · click to stamp · hold to grow · right-click delete · Space stop · F/Esc exit</div>';
+  '<div class="fly-hint">fly — move to steer · click = 1×1 · hold Shift to draw a box · right-click delete · Space stop · F/Esc exit</div>';
 document.body.append(hud);
 const hudStick = hud.querySelector<HTMLElement>('.fly-stick');
 

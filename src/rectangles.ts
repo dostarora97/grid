@@ -198,45 +198,11 @@ export function createRectangles(opts: {
     markDirty();
   }
 
-  /** Move the ghost to the current center cell if it changed (called each frame while flying). */
-  function refreshGhost(): void {
-    if (!ghostCell || strokeAnchor) {
-      return;
-    }
-    const [cx, cy] = centerCell();
-    if (cx === ghostCell[0] && cy === ghostCell[1]) {
-      return;
-    }
-    ghostCell = [cx, cy];
-    sync();
-    markDirty();
-  }
-
-  /** Drop a world-pinned anchor at the center cell and begin a hold-to-grow stroke. */
+  /** Drop a world-pinned anchor at the center cell and begin a sizing stroke. */
   function beginCenterStroke(): void {
     strokeAnchor = centerCell();
     ghostCell = null;
     preview = candidate(strokeAnchor, strokeAnchor);
-    sync();
-    markDirty();
-  }
-
-  /** Grow the stroke to span anchor→current center cell (called each frame while held). */
-  function updateCenterStroke(): void {
-    if (!strokeAnchor) {
-      return;
-    }
-    const next = candidate(strokeAnchor, centerCell());
-    if (
-      preview &&
-      next.x0 === preview.x0 &&
-      next.y0 === preview.y0 &&
-      next.x1 === preview.x1 &&
-      next.y1 === preview.y1
-    ) {
-      return; // unchanged — skip the redundant write
-    }
-    preview = next;
     sync();
     markDirty();
   }
@@ -251,7 +217,7 @@ export function createRectangles(opts: {
     }
     strokeAnchor = null;
     preview = null;
-    ghostCell = centerCell();
+    ghostCell = null;
     sync();
     markDirty();
   }
@@ -272,6 +238,37 @@ export function createRectangles(opts: {
       deleteById(hit.id);
       log.input.debug('rect:fly:delete', { id: hit.id, total: rects.length });
     }
+  }
+
+  /** Stamp a 1×1 rectangle at the center cell (fly-mode left-click), if free. */
+  function stampCenter(): void {
+    const [cx, cy] = centerCell();
+    if (commitPreview(candidate([cx, cy], [cx, cy]))) {
+      sync();
+      markDirty();
+    } else {
+      log.input.debug('rect:fly:stamp:reject', { cell: [cx, cy] });
+    }
+  }
+
+  /** Size the active stroke to anchor→(anchor + dx,dy) cells (Shift-draw, pan frozen). */
+  function sizeStrokeByCells(dx: number, dy: number): void {
+    if (!strokeAnchor) {
+      return;
+    }
+    const next = candidate(strokeAnchor, [strokeAnchor[0] + dx, strokeAnchor[1] + dy]);
+    if (
+      preview &&
+      next.x0 === preview.x0 &&
+      next.y0 === preview.y0 &&
+      next.x1 === preview.x1 &&
+      next.y1 === preview.y1
+    ) {
+      return; // unchanged — skip the redundant write
+    }
+    preview = next;
+    sync();
+    markDirty();
   }
 
   // --- Pointer handling. Draw tool = rubber-band create; Select tool = click to
@@ -487,9 +484,9 @@ export function createRectangles(opts: {
     // Fly-mode driving API (see fly.ts):
     centerCell,
     setGhost,
-    refreshGhost,
+    stampCenter,
     beginCenterStroke,
-    updateCenterStroke,
+    sizeStrokeByCells,
     commitCenterStroke,
     cancelCenterStroke,
     deleteAtCenter,

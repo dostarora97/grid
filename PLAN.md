@@ -66,10 +66,11 @@ Tooling: TypeGPU Runtime Inspector MCP (not wired). Persistence: scene serializa
   API: `F` enters (Esc/`F` exit), the OS cursor hides and locks to canvas center,
   raw mouse deltas integrate into a virtual joystick "stick" (clamped to `radiusPx`)
   whose distance from center sets a continuous pan SPEED (÷zoom → zoom-stable). The
-  center is the focus, so everything happens there: a center-cell **ghost** shows where
-  a click lands, **left-click** stamps a 1×1, **press-hold-then-fly-the-corner** grows a
-  block, **right-click** deletes under center, **Space** hard-stops. Unifies pan+draw
-  into one mouse-only loop (no per-action key). Normal mode (V/R, drag-draw, click-select)
+  center is the focus, so everything happens there: a center **crosshair** + subtle
+  joystick **ring** show heading; **left-click** stamps a 1×1, **hold Shift** freezes
+  flying and lets the mouse size a rectangle from the center anchor (1:1 with the
+  on-screen grid) — release Shift commits and resumes flying; **right-click** deletes
+  under center, **Space** hard-stops. Unifies pan+draw into one mostly-mouse loop. Normal mode (V/R, drag-draw, click-select)
   kept alongside (additive). New: `src/fly.ts` (+ `fly.test.ts` for the velocity curve),
   HUD in `main.ts`, `FLY` tunables + panel Fly section, `UiState.locked`. Notes:
   browser owns Esc-to-exit (can't prevent) + a ~1s re-lock cooldown after Esc; DOM panel
