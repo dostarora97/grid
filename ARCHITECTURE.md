@@ -1,7 +1,7 @@
 # Architecture.md
 
 **Project:** Infinite Rectangular Canvas *(a separable-projection infinite canvas)*
-**Status:** v0.5 (living document — this is the source of truth; v1 built & verified)
+**Status:** v0.6 (living document — this is the source of truth; v1 built & verified, post-v1 UX/rendering enhancements layered on)
 **Audience:** the autonomous coding agent building this project, and its human owner.
 
 ---
@@ -431,6 +431,17 @@ Update this roadmap as reality diverges.
 ---
 
 ## 18. Change Log (keep updated; commit with each change)
+
+- **v0.6** — **Post-v1 UX & rendering exploration** (v1's Definition of Done from v0.5 remains met; these are enhancements layered on top, built interactively with the human. Nothing from v1 was removed; the spec sections below still describe the v1 baseline, and this entry records where the built state now differs, with section cross-references).
+  - **Observability:** added `src/logger.ts` (tslog — verbose, timestamped, per-subsystem structured logging; `window.gridLog` for live level control) and `src/telemetry.ts` (logs every pointer/wheel/mouse/keyboard event). `window.gridCam` / `window.gridSettings` expose live state. High-frequency streams sit at the lowest level so the console can be quieted without a rebuild.
+  - **Precision — camera-relative grid phase (extends §8.3):** grid phase is now measured *relative to the focus* via per-level CPU-f64 fractional offsets uploaded in the uniform, so the shader's `fract` only ever sees small numbers. This restored Φ's translation invariance — the lattice stays crisp arbitrarily far from the origin (verified at focus 6.8e9), fixing a far-focus "gray-out" where absolute-world f32 coordinates lost sub-cell precision.
+  - **Edge rendering — adaptive multi-level grid (evolves §6.2, §7.5, §8.1):** the fixed minor/major pair is superseded by **`ADAPTIVE.levels` (=10) nested grids** at world spacing `G·5ⁿ`, summed additively in the fragment. Each level is `fract`/`fwidth`-anti-aliased and **derivative-faded** where its on-screen spacing bunches ("edge fade"). Result: (a) fine levels fade near the edge while coarser ones stay crisp → the lattice reaches to within a fraction of a pixel of the frame edge with **no gray mush and no empty margin**; (b) the minor/major/super-major hierarchy of §6.2 now **emerges for free** from additive coincidence (a line shared by coarser levels is brighter) rather than from hard-coded weights. The origin cross is still drawn explicitly on top. (Design path: single-frequency + fade ["option A"] left a "pseudo-edge / empty margin"; the multi-level version ["A+B"] is the built default.)
+  - **Direction color tint (realizes the §6.4 "compass to infinity"):** the background field is tinted by the **world coordinate** under each pixel, so color is one fabric with the grid — it pans, compresses, and expands with the projection. CIELAB-style opponents (+x = blue, −x = yellow, +y = red, −y = green), neutral at the world origin, saturating to the four edge-infinities via an overflow-safe rational squash `p/(|p|+1)` (not `tanh`, which NaNs on the GPU for the ~1e6 `world/scale` values near the edges → colored-band artifacts). Lines stay neutral on top.
+  - **Uniform pan (deviates from §7.6 "grab and pull"):** dragging now translates the focus by *pointer-delta ÷ zoom* (the focus/center scale) — a **constant control rate regardless of grab location**, eliminating the "edge flinging" where grab-and-pull inherited the projection's huge local scale near the edges. Identical to grab-and-pull near the center. Zoom-about-cursor and focus-glide are unchanged. (Principle: the projection distorts what you *see*, not how *input* behaves — uniform control-display gain.)
+  - **Settings panel (realizes §16 "surrounding chrome" early):** `src/panel.ts` — a vanilla-DOM, collapsible top-center panel (no framework), with all knobs live via the uniform: per-level enable chips, edge-fade start/end, line opacity + width, tail select, zoom, origin-axes toggle, direction-tint strength + scale, reset settings/view.
+  - **New uniform fields** (`CameraStruct`): `tailMode`, `focusLevelFrac: vec4f[levels]` (`.xy` = per-level f64 phase, `.z` = per-level enable), `fadeStartPx`, `fadeEndPx`, `lineAlpha`, `lineHalfPx`, `axesOn`, `tintStrength`, `tintScale`.
+  - **New tunables** (`src/tunables.ts`): `FADE`, `ADAPTIVE` (levels/base/halfPx/alpha), `TINT` (strength/scale/opponent colors). **New modules:** `logger.ts`, `telemetry.ts`, `panel.ts`.
+  - **Roadmap note (§16):** "adaptive `G`" is now effectively realized by the multi-level grid. Still deferred: rectangles/nodes (v2), links (v3), text/LOD (v4), isotropic mode, snapping guides, coordinate rulers/readout, hover highlight, persistence, colored lines, tint presets/palette UI, pan inertia, zoom-glide, prod-gating the verbose logging.
 
 - **v0.5** — **v1 built and verified** (Definition of Done §14 met). Summary of the built state:
   - **Toolchain:** scaffolded canonically via the TypeGPU CLI (`vite-bare`) — **Vite 8 + TypeScript (tsover)**, `unplugin-typegpu`, `@webgpu/types`, `oxlint`/`oxfmt`, `eslint-plugin-typegpu`. Runs in Chrome with no console errors; production `build` clean. (Corrected the doc's stale "Bun first-class plugin" lean: the actively-maintained `unplugin-typegpu` targets are Vite/Rollup + Babel.)
