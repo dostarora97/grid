@@ -287,10 +287,9 @@ const flyTune: FlyTune = { ...FLY };
 const hud = document.createElement('div');
 hud.className = 'fly-hud';
 hud.innerHTML =
-  '<div class="fly-reticle"></div><div class="fly-stick"></div>' +
+  '<div class="fly-reticle"></div>' +
   '<div class="fly-hint">fly — move to steer · click to stamp · hold to grow · right-click delete · Space stop · F/Esc exit</div>';
 document.body.append(hud);
-const hudStick = hud.querySelector<HTMLElement>('.fly-stick');
 
 const fly = attachFly({
   canvas,
@@ -370,12 +369,7 @@ function frame(now: number) {
   const dt = Math.min((now - lastTime) / 1000, 0.05); // clamp long stalls
   lastTime = now;
   interactions.tick(dt); // advances the glide spring, marking dirty while moving
-  fly.tick(dt); // integrates velocity-steering + stroke/ghost while locked
-  if (ui.locked && hudStick) {
-    // Reflect the virtual joystick offset on the HUD (screen Y-down for CSS).
-    const [sx, sy] = fly.stick();
-    hudStick.style.transform = `translate(-50%, -50%) translate(${sx}px, ${-sy}px)`;
-  }
+  fly.tick(dt); // integrates velocity-steering + stroke while locked
   if (dirty) {
     frameNo += 1;
     // Diagnostic: where does world-(0,0) project? Φ maps it strictly inside the

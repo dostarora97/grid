@@ -208,19 +208,7 @@ body {
   mix-blend-mode: screen;
 }
 
-/* Joystick dot: sits at center, translated by the virtual stick offset. */
-.fly-stick {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 10px;
-  height: 10px;
-  margin: -5px 0 0 -5px;
-  border-radius: 50%;
-  background: #4fa3ff;
-  box-shadow: 0 0 8px rgba(79, 163, 255, 0.9);
-}
-
+/* Fly-mode hint bar (bottom-center). */
 .fly-hint {
   position: absolute;
   bottom: 14px;
