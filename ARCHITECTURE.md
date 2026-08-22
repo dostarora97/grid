@@ -218,6 +218,7 @@ Cell spacing `G`; major-line interval `M`; colors and weights for minor / major 
   - `z` — center zoom (near the focus, 1 world unit ≈ `z` px).
   - viewport half-extents `Wx, Wy` (derivable from a `resolution` uniform).
   On the order of ~32 bytes. Nothing else changes per frame in v1.
+- **Built (v0.6):** the uniform grew beyond the v1 minimum — it now also carries `tailMode`, a `focusLevelFrac` array (per-level f64 phase + enable weight), `fadeStartPx`/`fadeEndPx`, `lineAlpha`/`lineHalfPx`, `axesOn`, and `tintStrength`/`tintScale` (settings-panel state). Still small, still the only per-frame upload.
 
 ### 7.2 Forward projection Φ (world → screen)
 Per-axis, separable. Let `dx = x − Fx`, `dy = y − Fy`. Screen offset from center `(ox, oy)`:
@@ -259,11 +260,14 @@ v1 needs no geometry beyond a single full-screen triangle/quad. The fragment sha
 
 The inverse blows up toward the edges (world → ∞), which is *correct* — gridlines bunch infinitely near the frame edge; handle it numerically (the `ε` clamp). Because the mapping is separable, screen-vertical lines come only from `wx` tests and screen-horizontal lines only from `wy` tests, so lines are always axis-aligned by construction — satisfying Section 6.3. This warps the grid perfectly with **zero tessellation** and perfect AA, and it's the flagship reason the whole thing is cheap: the closed-form Φ⁻¹ makes the per-pixel inverse trivial.
 
+> **Built (v0.6):** the single-`G` grid became an **adaptive multi-level** grid — 10 nested families at `G·5ⁿ`, each `fwidth`-AA'd and derivative-*faded* where its on-screen spacing bunches, summed additively. Minor/major/super-major now **emerge** from the additive overlap; the lattice stays crisp to within ~1 px of the edge (no gray mush, no empty margin). Phase is computed **camera-relative** (per-level f64 offsets in the uniform) for precision arbitrarily far from the origin. A world-position **direction color tint** is composited beneath the lines. See change log v0.6.
+
 ### 7.6 Camera and interactions (reference behavior)
 All of these change only camera state `F` and `z`:
 - **Pan / drag ("grab and pull"):** on pointer-down, record the world point under the cursor `W0 = Φ⁻¹(cursor)`. On move, set `F = W0 − Φ⁻¹(cursorOffset)` so the grabbed world point stays glued under the cursor. (Grab a shrunken edge region, drag it to center, watch it expand.)
 - **Zoom (wheel / pinch), about the cursor:** record `W0 = Φ⁻¹(cursor)`; update `z` (clamp e.g. `[0.35, 3]`, exponential per wheel delta); set `F` so `Φ(W0)` returns to the cursor — `F = W0 − Φ⁻¹(cursorOffset)` with the new `z`. Keeps the point under the cursor fixed.
 - **Focus glide (double-click / programmatic):** target `Ftarget = Φ⁻¹(point)`; animate `F` from current to target with a **spring** (interruptible; better feel than fixed easing).
+- **Built (v0.6):** **pan is now uniform** — the focus translates by *pointer-delta ÷ zoom* (a constant rate regardless of grab location), replacing grab-and-pull to remove the "edge flinging" (grab-and-pull inherited the projection's huge local scale near the edges). Identical near the center. Zoom-about-cursor and focus-glide are as specced above.
 
 ### 7.7 Tunables (expose these; real design knobs)
 - **Sigmoid tail** — the rational map `d/(|d|+W)` has a *heavy* (1/d) tail: distant content compresses slowly, so lots of context lingers near the edge. `tanh` (exponential tail) keeps less far context; `atan` sits between. A genuine, tunable choice — keep the map swappable.
@@ -283,6 +287,8 @@ A single full-screen pass:
 - A `requestAnimationFrame` loop. Optionally render only on camera change (dirty flag) to save power; during interaction it changes continuously, which is fine because this pass is cheap.
 
 That's the entire v1 renderer. No instancing, no storage buffers, no compute.
+
+> **Built (v0.6):** still a single full-screen pass (no instancing / storage / compute), but the fragment now renders the adaptive multi-level grid + edge fade + world-direction tint (see §7.5 built note), driven by the enlarged camera uniform (§7.1 built note) and a DOM settings panel (§16). The core invariant holds: one cheap analytic pass, one small per-frame uniform.
 
 ### 8.2 The general pipeline (FUTURE — design-aware, don't build in v1)
 As content arrives (roadmap), the pipeline grows into:
