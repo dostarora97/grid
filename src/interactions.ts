@@ -46,10 +46,14 @@ export function attachInteractions(
     springY.set(cam.focusY);
   }
 
-  // --- Pan: keep the grabbed world point glued under the cursor (§7.6). ---
+  // --- Pan: uniform drag at the focus scale (1/zoom) — constant rate no matter
+  // where you grab, so the edges don't fling. Near the center this matches
+  // grab-and-pull; everywhere else it stays uniform ("always feels like origin").
+  // The pointer delta (device px) is converted to world units at the focus
+  // scale, independent of the projection's wildly-varying local scale (§7.6).
   let panning = false;
-  let grabX = 0;
-  let grabY = 0;
+  let lastOx = 0;
+  let lastOy = 0;
   canvas.addEventListener('pointerdown', (e) => {
     try {
       canvas.setPointerCapture(e.pointerId);
@@ -58,11 +62,11 @@ export function attachInteractions(
     }
     panning = true;
     gliding = false;
-    [grabX, grabY] = worldAt(e.clientX, e.clientY);
+    [lastOx, lastOy] = offsetPx(e.clientX, e.clientY);
     log.input.debug('pan:start', {
       pointerId: e.pointerId,
       client: { x: e.clientX, y: e.clientY },
-      grabWorld: { x: grabX, y: grabY },
+      focus: { x: cam.focusX, y: cam.focusY },
       zoom: cam.zoom,
     });
   });
@@ -71,13 +75,17 @@ export function attachInteractions(
       return;
     }
     const [ox, oy] = offsetPx(e.clientX, e.clientY);
-    cam.focusX = grabX - unprojectAxis(ox, canvas.width / 2, cam.zoom);
-    cam.focusY = grabY - unprojectAxis(oy, canvas.height / 2, cam.zoom);
+    const dWorldX = (ox - lastOx) / cam.zoom;
+    const dWorldY = (oy - lastOy) / cam.zoom;
+    cam.focusX -= dWorldX;
+    cam.focusY -= dWorldY;
+    lastOx = ox;
+    lastOy = oy;
     syncSprings();
     markDirty();
     log.input.silly('pan:move', {
       client: { x: e.clientX, y: e.clientY },
-      offsetPx: { x: ox, y: oy },
+      dWorld: { x: dWorldX, y: dWorldY },
       focus: { x: cam.focusX, y: cam.focusY },
     });
   });
