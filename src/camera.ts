@@ -27,4 +27,7 @@ export const CameraStruct = d.struct({
    */
   focusMinorFrac: d.vec2f,
   focusMajorFrac: d.vec2f,
+  /** Derivative-based edge-fade thresholds in device px (Architecture §7.7, option A). */
+  fadeStartPx: d.f32,
+  fadeEndPx: d.f32,
 });

@@ -16,6 +16,19 @@ export const GRID = {
   axisHalfPx: 1.1,
 } as const;
 
+/**
+ * Derivative-based edge fade (option A). A line family's on-screen cell spacing
+ * is `1 / fwidth(cell)` device px; it fades out below `startPx` (where lines
+ * bunch toward the edge) and is fully shown above `endPx`, crossfading between.
+ * This dissolves the dense edge band into a clean recession instead of gray
+ * mush. Majors persist deeper than minors for free (5× the spacing).
+ * Live-tunable via `window.gridTune.fade(startPx, endPx)`.
+ */
+export const FADE = {
+  startPx: 2.5,
+  endPx: 9,
+} as const;
+
 /** Colors: background rgb (sRGB 0..1) + per-class line opacities over the background. */
 export const COLORS = {
   // #0E1116

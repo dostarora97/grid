@@ -4,7 +4,7 @@ import { attachInteractions, type CameraState } from './interactions';
 import { log } from './logger';
 import { projectAxis } from './projection';
 import { attachInputTelemetry } from './telemetry';
-import { CAMERA, COLORS, GRID, TAIL, TAIL_MODE } from './tunables';
+import { CAMERA, COLORS, FADE, GRID, TAIL, TAIL_MODE } from './tunables';
 
 const canvasEl = document.querySelector<HTMLCanvasElement>('#canvas');
 if (!canvasEl) {
@@ -36,6 +36,12 @@ if (typeof window !== 'undefined') {
   window.gridCam = cam;
 }
 
+// Live-tunable render knobs (change from the console via window.gridTune).
+const tune: { fadeStartPx: number; fadeEndPx: number } = {
+  fadeStartPx: FADE.startPx,
+  fadeEndPx: FADE.endPx,
+};
+
 const camera = root.createUniform(CameraStruct, {
   focus: d.vec2f(0, 0),
   zoom: cam.zoom,
@@ -43,6 +49,8 @@ const camera = root.createUniform(CameraStruct, {
   tailMode: TAIL_MODE[TAIL],
   focusMinorFrac: d.vec2f(0, 0),
   focusMajorFrac: d.vec2f(0, 0),
+  fadeStartPx: tune.fadeStartPx,
+  fadeEndPx: tune.fadeEndPx,
 });
 
 // Colors captured by the shader as GPU constants.
@@ -113,19 +121,34 @@ const pipeline = root.createRenderPipeline({
     const minorCell = delta * INV_MINOR + c.focusMinorFrac;
     const majorCell = delta * INV_MAJOR + c.focusMajorFrac;
 
-    const minorD = std.abs(std.fract(minorCell - 0.5) - 0.5) / std.fwidth(minorCell);
-    const majorD = std.abs(std.fract(majorCell - 0.5) - 0.5) / std.fwidth(majorCell);
+    const minorFw = std.fwidth(minorCell);
+    const majorFw = std.fwidth(majorCell);
+    const minorD = std.abs(std.fract(minorCell - 0.5) - 0.5) / minorFw;
+    const majorD = std.abs(std.fract(majorCell - 0.5) - 0.5) / majorFw;
     const axisD = std.abs(world) / std.fwidth(world);
+
+    // Derivative-based fade (option A): a family's on-screen cell spacing is
+    // 1/fwidth(cell) device px. Fade it out below fadeStartPx (bunching toward
+    // the edge), fully show it above fadeEndPx — so the dense edge dissolves to
+    // a clean recession instead of gray mush. Majors (5× spacing) persist deeper.
+    const minorFade = d.vec2f(
+      std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / minorFw.x),
+      std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / minorFw.y),
+    );
+    const majorFade = d.vec2f(
+      std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / majorFw.x),
+      std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / majorFw.y),
+    );
 
     // Because the map is separable, screen-vertical lines come only from the
     // x-coordinate and horizontal lines only from y — combine with max.
     const minor = std.max(
-      lineCoverage(minorD.x, GRID.minorHalfPx),
-      lineCoverage(minorD.y, GRID.minorHalfPx),
+      lineCoverage(minorD.x, GRID.minorHalfPx) * minorFade.x,
+      lineCoverage(minorD.y, GRID.minorHalfPx) * minorFade.y,
     );
     const major = std.max(
-      lineCoverage(majorD.x, GRID.majorHalfPx),
-      lineCoverage(majorD.y, GRID.majorHalfPx),
+      lineCoverage(majorD.x, GRID.majorHalfPx) * majorFade.x,
+      lineCoverage(majorD.y, GRID.majorHalfPx) * majorFade.y,
     );
     const axis = std.max(
       lineCoverage(axisD.x, GRID.axisHalfPx),
@@ -170,6 +193,7 @@ function writeCamera() {
     tailMode: TAIL_MODE[TAIL],
     focusMinorFrac: minorFrac,
     focusMajorFrac: majorFrac,
+    fade: { startPx: tune.fadeStartPx, endPx: tune.fadeEndPx },
   };
   log.camera.silly('write', snapshot);
   camera.write({
@@ -179,6 +203,8 @@ function writeCamera() {
     tailMode: TAIL_MODE[TAIL],
     focusMinorFrac: d.vec2f(minorFrac[0], minorFrac[1]),
     focusMajorFrac: d.vec2f(majorFrac[0], majorFrac[1]),
+    fadeStartPx: tune.fadeStartPx,
+    fadeEndPx: tune.fadeEndPx,
   });
 }
 
@@ -186,6 +212,24 @@ function writeCamera() {
 const markDirty = () => {
   dirty = true;
 };
+
+declare global {
+  interface Window {
+    /** Live render-knob tuning from the console, e.g. gridTune.fade(1.5, 12). */
+    gridTune: { fade: (startPx: number, endPx: number) => void };
+  }
+}
+if (typeof window !== 'undefined') {
+  window.gridTune = {
+    fade: (startPx: number, endPx: number) => {
+      tune.fadeStartPx = startPx;
+      tune.fadeEndPx = endPx;
+      markDirty();
+      log.boot.info('fade updated', { startPx, endPx });
+    },
+  };
+}
+
 const interactions = attachInteractions(canvas, cam, markDirty);
 attachInputTelemetry(canvas);
 
