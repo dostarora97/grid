@@ -2,6 +2,7 @@ import { common, d, std, tgpu } from 'typegpu';
 import { CameraStruct } from './camera';
 import { attachInteractions, type CameraState } from './interactions';
 import { log } from './logger';
+import { createSettingsPanel, type Settings } from './panel';
 import { projectAxis } from './projection';
 import { attachInputTelemetry } from './telemetry';
 import { ADAPTIVE, CAMERA, COLORS, FADE, GRID, TAIL, TAIL_MODE } from './tunables';
@@ -36,26 +37,32 @@ if (typeof window !== 'undefined') {
   window.gridCam = cam;
 }
 
-// Live-tunable render knobs (change from the console via window.gridTune).
-const tune: { fadeStartPx: number; fadeEndPx: number } = {
-  fadeStartPx: FADE.startPx,
-  fadeEndPx: FADE.endPx,
-};
-
-// Adaptive-grid constants (inlined into the shader as literals).
+// Adaptive-grid structure (inlined into the shader as literals).
 const LEVELS = ADAPTIVE.levels;
 const BASE = ADAPTIVE.base;
-const LEVEL_HALF_PX = ADAPTIVE.halfPx;
-const LEVEL_ALPHA = ADAPTIVE.alpha;
+
+/** Live render settings, driven by the settings panel and uploaded each frame. */
+const settings: Settings = {
+  levels: Array.from({ length: LEVELS }, () => true),
+  fadeStartPx: FADE.startPx,
+  fadeEndPx: FADE.endPx,
+  lineAlpha: ADAPTIVE.alpha,
+  lineHalfPx: ADAPTIVE.halfPx,
+  tailMode: TAIL_MODE[TAIL],
+  axesOn: true,
+};
 
 const camera = root.createUniform(CameraStruct, {
   focus: d.vec2f(0, 0),
   zoom: cam.zoom,
   resolution: d.vec2f(1, 1),
-  tailMode: TAIL_MODE[TAIL],
-  focusLevelFrac: Array.from({ length: LEVELS }, () => d.vec4f(0, 0, 0, 0)),
-  fadeStartPx: tune.fadeStartPx,
-  fadeEndPx: tune.fadeEndPx,
+  tailMode: settings.tailMode,
+  focusLevelFrac: Array.from({ length: LEVELS }, () => d.vec4f(0, 0, 1, 0)),
+  fadeStartPx: settings.fadeStartPx,
+  fadeEndPx: settings.fadeEndPx,
+  lineAlpha: settings.lineAlpha,
+  lineHalfPx: settings.lineHalfPx,
+  axesOn: 1,
 });
 
 // Colors captured by the shader as GPU constants.
@@ -128,7 +135,7 @@ const pipeline = root.createRenderPipeline({
     let grid = d.f32(0);
     for (let n = 0; n < LEVELS; n++) {
       const spacing = GRID.spacing * std.pow(d.f32(BASE), d.f32(n));
-      const frac = c.focusLevelFrac[n].xy; // precise fractional focus offset at this level
+      const frac = c.focusLevelFrac[n]; // .xy = phase offset, .z = per-level weight
       const cpp = wpp / spacing; // cells per pixel, per axis
       const fieldX = delta.x / spacing + frac.x;
       const fieldY = delta.y / spacing + frac.y;
@@ -137,10 +144,11 @@ const pipeline = root.createRenderPipeline({
       const fadeX = std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / cpp.x);
       const fadeY = std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / cpp.y);
       const lineCov = std.max(
-        lineCoverage(distX, LEVEL_HALF_PX) * fadeX,
-        lineCoverage(distY, LEVEL_HALF_PX) * fadeY,
+        lineCoverage(distX, c.lineHalfPx) * fadeX,
+        lineCoverage(distY, c.lineHalfPx) * fadeY,
       );
-      grid = grid + lineCov * LEVEL_ALPHA;
+      // frac.z is the per-level enable/weight (0 or 1) from the settings panel.
+      grid = grid + lineCov * c.lineAlpha * frac.z;
     }
 
     // Origin axes on top (absolute world; precise exactly when the origin is in view).
@@ -151,7 +159,7 @@ const pipeline = root.createRenderPipeline({
     );
 
     const gridColor = std.mix(BG, LINE, std.clamp(grid, d.f32(0), d.f32(1)));
-    const out = std.mix(gridColor, LINE, axis * COLORS.axisAlpha);
+    const out = std.mix(gridColor, LINE, axis * COLORS.axisAlpha * c.axesOn);
     return d.vec4f(out, 1);
   },
 });
@@ -169,30 +177,37 @@ function cellFraction(v: number, spacing: number): number {
 }
 
 function writeCamera() {
-  // Per-level fractional focus offset (f64) — precise phase for every level.
+  // Per-level: .xy = precise f64 fractional focus offset, .z = enable weight.
   const levelFrac: d.v4f[] = [];
   for (let n = 0; n < LEVELS; n++) {
     const spacing = GRID.spacing * BASE ** n;
+    const weight = settings.levels[n] ? 1 : 0;
     levelFrac.push(
-      d.vec4f(cellFraction(cam.focusX, spacing), cellFraction(cam.focusY, spacing), 0, 0),
+      d.vec4f(cellFraction(cam.focusX, spacing), cellFraction(cam.focusY, spacing), weight, 0),
     );
   }
-  const snapshot = {
+  log.camera.silly('write', {
     focus: { x: cam.focusX, y: cam.focusY },
     zoom: cam.zoom,
     resolution: { w: canvas.width, h: canvas.height },
-    tailMode: TAIL_MODE[TAIL],
-    fade: { startPx: tune.fadeStartPx, endPx: tune.fadeEndPx },
-  };
-  log.camera.silly('write', snapshot);
+    tailMode: settings.tailMode,
+    fade: { startPx: settings.fadeStartPx, endPx: settings.fadeEndPx },
+    lineAlpha: settings.lineAlpha,
+    lineHalfPx: settings.lineHalfPx,
+    axesOn: settings.axesOn,
+    levels: settings.levels,
+  });
   camera.write({
     focus: d.vec2f(cam.focusX, cam.focusY),
     zoom: cam.zoom,
     resolution: d.vec2f(canvas.width, canvas.height),
-    tailMode: TAIL_MODE[TAIL],
+    tailMode: settings.tailMode,
     focusLevelFrac: levelFrac,
-    fadeStartPx: tune.fadeStartPx,
-    fadeEndPx: tune.fadeEndPx,
+    fadeStartPx: settings.fadeStartPx,
+    fadeEndPx: settings.fadeEndPx,
+    lineAlpha: settings.lineAlpha,
+    lineHalfPx: settings.lineHalfPx,
+    axesOn: settings.axesOn ? 1 : 0,
   });
 }
 
@@ -203,20 +218,29 @@ const markDirty = () => {
 
 declare global {
   interface Window {
-    /** Live render-knob tuning from the console, e.g. gridTune.fade(1.5, 12). */
-    gridTune: { fade: (startPx: number, endPx: number) => void };
+    /** Live render settings, exposed for console inspection/tweaking. */
+    gridSettings: Settings;
   }
 }
 if (typeof window !== 'undefined') {
-  window.gridTune = {
-    fade: (startPx: number, endPx: number) => {
-      tune.fadeStartPx = startPx;
-      tune.fadeEndPx = endPx;
-      markDirty();
-      log.boot.info('fade updated', { startPx, endPx });
-    },
-  };
+  window.gridSettings = settings;
 }
+
+// Settings panel — DOM chrome around the canvas (Architecture §16).
+createSettingsPanel({
+  settings,
+  cam,
+  levelCount: LEVELS,
+  levelSpacing: (n) => GRID.spacing * BASE ** n,
+  zoomRange: [CAMERA.zoomMin, CAMERA.zoomMax],
+  onChange: markDirty,
+  resetView: () => {
+    cam.focusX = 0;
+    cam.focusY = 0;
+    cam.zoom = CAMERA.defaultZoom;
+    markDirty();
+  },
+});
 
 const interactions = attachInteractions(canvas, cam, markDirty);
 attachInputTelemetry(canvas);

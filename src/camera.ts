@@ -18,15 +18,18 @@ export const CameraStruct = d.struct({
   /** Φ tail selector: 0 = rational, 1 = tanh, 2 = atan (Architecture §7.7). */
   tailMode: d.f32,
   /**
-   * The focus's fractional offset within each adaptive level's cell (in `.xy`),
-   * computed on the CPU in f64. The grid phase for every level is measured
-   * relative to the focus using these, so the shader's `fract` only ever sees
-   * small numbers — keeping the lattice crisp arbitrarily far from the origin
-   * (translation invariance; Architecture §8.3). `vec4f` (not `vec2f`) to satisfy
-   * the uniform array's 16-byte stride; only `.xy` is used.
+   * `.xy` = the focus's fractional offset within each adaptive level's cell
+   * (CPU-f64 → precise phase, translation-invariant; Architecture §8.3).
+   * `.z` = per-level enable/weight (0 or 1), driven by the settings panel.
+   * `vec4f` (not `vec2f`) also satisfies the uniform array's 16-byte stride.
    */
   focusLevelFrac: d.arrayOf(d.vec4f, ADAPTIVE.levels),
   /** Derivative-based edge-fade thresholds in device px (Architecture §7.7). */
   fadeStartPx: d.f32,
   fadeEndPx: d.f32,
+  /** Live appearance knobs from the settings panel. */
+  lineAlpha: d.f32,
+  lineHalfPx: d.f32,
+  /** Origin-axes toggle: 1 = shown, 0 = hidden. */
+  axesOn: d.f32,
 });

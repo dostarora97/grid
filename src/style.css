@@ -28,3 +28,153 @@ body {
 #canvas:active {
   cursor: grabbing;
 }
+
+/* Settings panel — DOM chrome around the canvas (Architecture §16). */
+.sp {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  width: 320px;
+  max-width: 92vw;
+  overflow: hidden;
+  font:
+    12px/1.4 system-ui,
+    sans-serif;
+  color: #cfd3dc;
+  background: rgba(20, 22, 28, 0.92);
+  border: 1px solid #2e313a;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  user-select: none;
+}
+
+.sp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.sp-title {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.sp-chevron {
+  opacity: 0.7;
+}
+
+.sp-body {
+  display: none;
+  padding: 2px 12px 12px;
+  border-top: 1px solid #2e313a;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.sp.sp-open .sp-body {
+  display: block;
+}
+
+.sp-section {
+  margin: 12px 0;
+}
+
+.sp-label {
+  margin-bottom: 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.sp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sp-chip {
+  padding: 3px 7px;
+  font-size: 11px;
+  color: #8b90a0;
+  background: transparent;
+  border: 1px solid #3a3e49;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sp-chip.on {
+  color: #fff;
+  background: #3b6ea5;
+  border-color: #3b6ea5;
+}
+
+.sp-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.sp-actions {
+  margin-top: 12px;
+}
+
+.sp-btn {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: #cfd3dc;
+  background: transparent;
+  border: 1px solid #3a3e49;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sp-btn:hover,
+.sp-chip:hover {
+  border-color: #5a6070;
+}
+
+.sp-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.sp-slabel {
+  width: 54px;
+  opacity: 0.7;
+}
+
+.sp-range {
+  flex: 1;
+}
+
+.sp-sval {
+  width: 42px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  opacity: 0.85;
+}
+
+.sp-select {
+  flex: 1;
+  padding: 3px;
+  color: #cfd3dc;
+  background: #1a1d24;
+  border: 1px solid #3a3e49;
+  border-radius: 6px;
+}
+
+.sp-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  cursor: pointer;
+}
