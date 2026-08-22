@@ -58,6 +58,26 @@ function squashTail(pp: number, mode: number): number {
 }
 
 /**
+ * Derivative of `squashTail` at `pp` — the local scale factor of the forward Φ
+ * (before the ×zoom). Used for isotropic node rendering: a rectangle is drawn at a
+ * single scale (√ of the two axis scales at its center) so it keeps true
+ * proportions instead of foreshortening per-corner.
+ */
+function squashDeriv(pp: number, mode: number): number {
+  'use gpu';
+  if (mode > 1.5) {
+    const a = (Math.PI / 2) * pp; // atan tail: 1/(1+((π/2)p)²)
+    return 1 / (1 + a * a);
+  }
+  if (mode > 0.5) {
+    const t = std.tanh(std.clamp(pp, d.f32(-30), d.f32(30))); // tanh: sech² = 1−tanh²
+    return 1 - t * t;
+  }
+  const den = 1 + std.abs(pp); // rational: 1/(1+|p|)²
+  return 1 / (den * den);
+}
+
+/**
  * Rectangles on the grid: a CPU array of integer cell-AABBs mirrored into a GPU
  * storage buffer, drawn as instanced quads whose corners are projected by the
  * forward Φ (so they foreshorten and align with the grid). In the Draw tool a
@@ -454,12 +474,31 @@ export function createRectangles(opts: {
     const cornerY = std.floor(v / 2); // 0,0,1,1
     const cornerX = v - 2 * cornerY; // 0,1,0,1
     const corner = d.vec2f(cornerX, cornerY);
-    const worldCorner = std.mix(r.min, r.max, corner);
     const half = camera.$.resolution * 0.5;
+    const mode = camera.$.tailMode;
+
+    // Anisotropic: project each corner independently → foreshortens/stretches.
+    const worldCorner = std.mix(r.min, r.max, corner);
     const camDelta = worldCorner - camera.$.focus;
-    const clipX = squashTail((camera.$.zoom * camDelta.x) / half.x, camera.$.tailMode);
-    const clipY = squashTail((camera.$.zoom * camDelta.y) / half.y, camera.$.tailMode);
-    return { pos: d.vec4f(clipX, clipY, 0, 1), uv: corner, flags: r.flags };
+    const clipAniso = d.vec2f(
+      squashTail((camera.$.zoom * camDelta.x) / half.x, mode),
+      squashTail((camera.$.zoom * camDelta.y) / half.y, mode),
+    );
+
+    // Isotropic: project the center, then offset corners by the world half-size
+    // scaled by ONE local scale (√ of the two axis scales) → true proportions.
+    const center = (r.min + r.max) * 0.5;
+    const halfSize = (r.max - r.min) * 0.5;
+    const uC = (camera.$.zoom * (center - camera.$.focus)) / half;
+    const cc = d.vec2f(squashTail(uC.x, mode), squashTail(uC.y, mode));
+    const sx = camera.$.zoom * squashDeriv(uC.x, mode);
+    const sy = camera.$.zoom * squashDeriv(uC.y, mode);
+    const s = std.sqrt(sx * sy);
+    const rel = d.vec2f(cornerX * 2 - 1, cornerY * 2 - 1); // corner in {−1,1}
+    const clipIso = cc + (rel * halfSize * s) / half;
+
+    const clip = std.mix(clipAniso, clipIso, camera.$.isoMode);
+    return { pos: d.vec4f(clip.x, clip.y, 0, 1), uv: corner, flags: r.flags };
   });
 
   const fragment = tgpu.fragmentFn({

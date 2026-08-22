@@ -90,6 +90,15 @@ serialization — is now BUILT on the fly branch: see Experiments.)*
     Verified round-trip in Chrome. *localStorage is ample for these tiny records; swap to
     IndexedDB later (behind the same interface) only if scenes get large/binary.*
 
+- **`exp/isotropic-mode` — isotropic node rendering** *(branched off the fly branch)*.
+  A `Projection → "isotropic nodes"` toggle (`CameraStruct.isoMode`). Off = today's
+  anisotropic look (rect corners projected independently by Φ → foreshorten/stretch);
+  on = each rectangle is drawn at a **single local scale** (√ of the two axis scales at
+  its center, from `squashDeriv` = Φ-tail derivative) so it keeps **true proportions** —
+  position still from Φ. Only the rect vertex shader changes (computes both clips + mixes
+  by `isoMode`); the grid is untouched. Verified the toggle live in Chrome. *Decide
+  whether isotropic should be per-node vs global, and whether the grid should follow.*
+
 ## v2 design — rectangles (decided)
 Conceptual model: **a rectangle is a contiguous block of grid cells, given a fill** —
 an annotation on the same lattice, not a new coordinate system. Geometry is **integer

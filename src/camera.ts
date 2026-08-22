@@ -40,4 +40,11 @@ export const CameraStruct = d.struct({
    */
   tintStrength: d.f32,
   tintScale: d.f32,
+  /**
+   * Node rendering mode: 0 = anisotropic (corners projected independently by Φ,
+   * so rectangles foreshorten/stretch — the immersive look); 1 = isotropic (nodes
+   * drawn at a single local scale so they keep true proportions — the clean-diagram
+   * look). Position still comes from Φ either way. Experiment (§16).
+   */
+  isoMode: d.f32,
 });

@@ -56,6 +56,7 @@ const settings: Settings = {
   lineHalfPx: ADAPTIVE.halfPx,
   tailMode: TAIL_MODE[TAIL],
   axesOn: true,
+  isoMode: false,
   tintStrength: TINT.strength,
   tintScale: TINT.scale,
 };
@@ -73,6 +74,7 @@ const camera = root.createUniform(CameraStruct, {
   axesOn: 1,
   tintStrength: settings.tintStrength,
   tintScale: settings.tintScale,
+  isoMode: 0,
 });
 
 // Colors captured by the shader as GPU constants.
@@ -248,6 +250,7 @@ function writeCamera() {
     axesOn: settings.axesOn ? 1 : 0,
     tintStrength: settings.tintStrength,
     tintScale: settings.tintScale,
+    isoMode: settings.isoMode ? 1 : 0,
   });
 }
 

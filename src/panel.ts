@@ -12,6 +12,8 @@ export type Settings = {
   /** Φ tail: 0 = rational, 1 = tanh, 2 = atan. */
   tailMode: number;
   axesOn: boolean;
+  /** Node rendering: false = anisotropic (warps), true = isotropic (true proportions). */
+  isoMode: boolean;
   /** Directional opponent-color tint strength (0 = off). */
   tintStrength: number;
   /** World-space scale of the neutral halo (larger = smoother, broader). */
@@ -364,6 +366,19 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
       cam.zoom = v;
     },
   );
+  const isoLabel = el('label', 'sp-check');
+  const isoInput = el('input');
+  isoInput.type = 'checkbox';
+  const isoSync = () => {
+    isoInput.checked = settings.isoMode;
+  };
+  isoInput.addEventListener('change', () => {
+    settings.isoMode = isoInput.checked;
+    onChange();
+  });
+  syncers.push(isoSync);
+  isoLabel.append(isoInput, el('span', undefined, 'isotropic nodes (true proportions)'));
+  projSec.append(isoLabel);
 
   // --- Origin axes ---
   const axesSec = section('Origin axes');
@@ -418,6 +433,7 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
     settings.lineHalfPx = defaults.lineHalfPx;
     settings.tailMode = defaults.tailMode;
     settings.axesOn = defaults.axesOn;
+    settings.isoMode = defaults.isoMode;
     settings.tintStrength = defaults.tintStrength;
     settings.tintScale = defaults.tintScale;
     refresh();
