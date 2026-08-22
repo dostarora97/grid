@@ -1,7 +1,7 @@
 # Architecture.md
 
 **Project:** Infinite Rectangular Canvas *(a separable-projection infinite canvas)*
-**Status:** v0.6 (living document — this is the source of truth; v1 built & verified, post-v1 UX/rendering enhancements layered on)
+**Status:** v0.7 (living document — this is the source of truth; v1 built & verified, post-v1 UX/rendering enhancements layered on, **v2 rectangles built & verified**)
 **Audience:** the autonomous coding agent building this project, and its human owner.
 
 ---
@@ -297,6 +297,8 @@ As content arrives (roadmap), the pipeline grows into:
 - **Analytic shader elements** (grid, rulers) stay fragment-shader-based.
 - **Compute-shader culling → indirect draw** (much later, only when profiling justifies): reject off-screen / sub-pixel nodes on the GPU, compact to an indirect draw. **Do not build prematurely** — brute instancing handles very large rect counts fine.
 
+> **Built (v0.7):** the instanced-quad path + node storage buffer are now real, for rectangles (`src/rectangles.ts`). One unit quad drawn as a **triangle-strip**, N instances; the vertex shader reads each instance's world corners from a `d.arrayOf(RectGPU, CAP)` `readonly` storage buffer and applies the **forward Φ tail** per axis (`squashTail`, the exact inverse of the grid fragment's `expandTail`) so cell-aligned edges land on gridlines and foreshorten for free. Camera-relative (`worldCorner − focus`), matching §8.3. Rendering is now **two pipelines in one render pass** via the unstable command-encoder API (grid `draw(3)`, then rects `draw(4, count)` alpha-blended over it) — the single-pass invariant of §8.1 holds; only the render *records through an encoder* now. The buffer is written **only on create/delete/select and during an active rubber-band** (not per frame), preserving §8.3.
+
 ### 8.3 The load-bearing invariant
 - All real work (layout, math, future hit-testing/collision) happens in **flat data space**.
 - **Φ and Φ⁻¹ are the only bridge** between data space and screen space.
@@ -318,6 +320,8 @@ v1 has **no node data** — only the camera uniform. But design the schema now s
 - Design it to be **compute-readable** so a future cull/layout compute pass consumes the same buffer without restructuring.
 
 Keep this section honest about built vs. planned as you implement.
+
+> **Built (v0.7):** realized for rectangles. A rectangle is a block of grid cells, stored on the CPU as an **integer cell-AABB** `{ id, x0, y0, x1, y1 }` (inclusive) — positions/sizes in grid-cell units exactly as this section anticipated. Mirrored into a GPU storage buffer of `RectGPU = d.struct({ min: vec2f, max: vec2f, flags: f32 })` (world-space corners `min = cell·G`, `max = (cell+1)·G`; `flags` is a discrete state: 0 normal / 1 selected / 2 preview-valid / 3 preview-invalid). No-overlap is an integer AABB-intersection test in cell space; CPU picking is a linear scan over the same (at most one hit, since overlaps are forbidden) — `flatbush`/§10 still deferred until counts grow. The v0.7 sync is a **full buffer write** on change (cheap at these counts); the per-record **delta** interface remains the design target. Refinements vs. the reference shape: `color` is deferred (v2 uses one default fill), and `flags` is currently an `f32` state tag rather than packed bits.
 
 ---
 
@@ -409,6 +413,7 @@ v1 is complete only when **all** of the following hold, are demonstrated, and ar
 
 - **v1 — Projected grid (this build):** infinite orthogonal grid through the separable projection; pan (grab-and-pull), zoom-about-cursor, focus-glide; analytic fragment-shader rendering; anisotropic. Full-screen pass only.
 - **v2 — Rectangles on the grid:** click a grid cell to place a rectangle that **snaps to the grid** (the grid's core affordance, Section 6.4). Introduces the node storage buffer (Section 9), instanced-quad rendering with Φ in the vertex shader, and CPU picking (`flatbush`) for click-to-place / select. Rectangles foreshorten (anisotropic).
+  - **Built (v0.7):** shipped as **create + select + delete** (no move/resize yet). **Tool modes** (Select/Draw; `V`/`R` + panel buttons; cursor changes) disambiguate pan-vs-draw ("Option A"; modifier/hybrid deferred). **Create** is a **rubber-band**: press = anchor cell, drag = live cell-snapped preview (inclusive block), release = commit; an **empty click = a 1×1 cell**; **Esc** cancels. **No-overlap is forbidden** — an overlapping preview renders **red** and won't commit (touching edges are adjacent cells → allowed); auto-clamp remains the deferred alternative. **Select** = click (drag still pans); selected rect gets a brighter fill + outline. **Delete** = `Delete`/`Backspace` on the selection, or **right-click** to delete under the cursor immediately. Appearance = translucent premultiplied fill + `fwidth`-AA outline with grid + direction-tint showing through. See §8.2/§9 built notes and change log v0.7. *Deferred to v2+: move/resize, per-rect color, multi-select, persistence (in-memory, lost on reload).*
 - **v3 — Links between nodes:** connectors **tessellated along their length** so they curve correctly under the projection (a straight world segment is not straight on screen except along an axis).
 - **v4 — Text & LOD:** crisp text (MSDF/bitmap fonts) inside nodes; level-of-detail so far nodes degrade gracefully (colored quad → +title → full) — also where anisotropic slivers get "rescued" visually.
 - **v5 — Scale:** compute-shader culling → `drawIndexedIndirect`, off-main-thread work, etc., **only when profiling justifies it.**
@@ -437,6 +442,15 @@ Update this roadmap as reality diverges.
 ---
 
 ## 18. Change Log (keep updated; commit with each change)
+
+- **v0.7** — **v2: rectangles on the grid — built & verified** (create / select / delete; the first content that sits *on* the grid. Nothing from v1/v0.6 removed; spec §8.2/§9/§16 carry inline "Built (v0.7)" notes and this entry records the built state).
+  - **Data model (realizes §9):** a rectangle is a block of grid cells, stored CPU-side as an integer cell-AABB `{ id, x0, y0, x1, y1 }` (inclusive) — positions in grid-cell units as §9 anticipated. Mirrored into a GPU storage buffer `d.arrayOf(RectGPU, 256)` where `RectGPU = d.struct({ min: vec2f, max: vec2f, flags: f32 })` (world corners + a discrete state flag: 0 normal / 1 selected / 2 preview-valid / 3 preview-invalid). Written only on change + during a drag, never per frame (§8.3 preserved).
+  - **Rendering (realizes §8.2):** instanced **triangle-strip** quads (`draw(4, count)`); the vertex shader reads each instance's corners and applies the **forward Φ tail** `squashTail` per axis — the exact inverse of the grid fragment's `expandTail` — so cell-aligned edges land on gridlines and foreshorten anisotropically for free. Corners are camera-relative (`worldCorner − focus`). The frame is now **two pipelines in one render pass** via the unstable command-encoder API (grid `draw(3)`, then rects over it, premultiplied alpha over-blend); the §8.1 single-pass invariant holds. Fragment = translucent fill + `fwidth`-AA outline; the grid and direction-tint show through; invalid previews tint red.
+  - **Interaction — tool modes ("Option A"):** a **Select** and a **Draw** tool, toggled by `V`/`R` and panel buttons, with a cursor change; pan/zoom/glide stay on Select. (Modifier/hybrid input deferred.) `src/interactions.ts` pan is now gated to the left button so right-click never pans.
+  - **Create (rubber-band):** press = anchor cell (`floor(world/G)`), drag = live snapped preview from anchor→current (inclusive), release = commit; **empty click = 1×1 cell**; **Esc** cancels. **No-overlap forbidden** — integer AABB-intersection test; an overlapping preview renders red and won't commit (touching = adjacent cells, allowed). Auto-clamp-on-overlap remains the noted alternative.
+  - **Select + delete:** click picks the rect under the cursor (linear scan in cell space; drag still pans, disambiguated by a 4 px slop); selected rect gets a brighter fill + outline. `Delete`/`Backspace` removes the selection (ignored while typing in a panel control); **right-click** deletes the rect under the cursor immediately (no menu), any tool.
+  - **New modules:** `src/rectangles.ts` (model + storage buffer + instanced pipeline + Draw-tool handlers), `src/pointer.ts` (shared screen→world `offsetPx`/`worldAt`, extracted from `interactions.ts` so both it and the Draw handler share one Φ⁻¹). `UiState` (tool) added to `interactions.ts`; `panel.ts` gained the Tool section.
+  - **Deferred (v2+):** move/reposition, resize, per-rect color, multi-select, auto-clamp-on-overlap, persistence (rects are in-memory, lost on reload), Option-B/hybrid input, `flatbush` spatial index (linear scan is fine at current counts).
 
 - **v0.6** — **Post-v1 UX & rendering exploration** (v1's Definition of Done from v0.5 remains met; these are enhancements layered on top, built interactively with the human. Nothing from v1 was removed; the spec sections below still describe the v1 baseline, and this entry records where the built state now differs, with section cross-references).
   - **Observability:** added `src/logger.ts` (tslog — verbose, timestamped, per-subsystem structured logging; `window.gridLog` for live level control) and `src/telemetry.ts` (logs every pointer/wheel/mouse/keyboard event). `window.gridCam` / `window.gridSettings` expose live state. High-frequency streams sit at the lowest level so the console can be quieted without a rebuild.
