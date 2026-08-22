@@ -41,10 +41,17 @@ rulers along the frame. *(Adaptive `G` is effectively DONE via the multi-level g
 Tooling: TypeGPU Runtime Inspector MCP (not wired). Persistence: scene serialization.
 
 ## Roadmap (next milestones — §16)
-- **v2 — Rectangles on the grid** *(NEXT — actively planning):* click a cell → place a
-  rectangle that snaps to the grid. Introduces the node **storage buffer** (§9),
-  **instanced-quad** rendering with Φ in the vertex shader, and **CPU picking**
-  (`flatbush`) for click-to-place/select. Rectangles foreshorten (anisotropic).
+- **v2 — Rectangles on the grid** *(IN PROGRESS):* click-drag a cell-snapped rectangle
+  that warps with the grid. Introduces the node **storage buffer** (§9) and
+  **instanced-quad** rendering with Φ in the vertex shader.
+  - ✅ step 1 — tool modes (Select/Draw; `V`/`R` + panel buttons; cursor).
+  - ✅ step 2 — rect data model + storage buffer + instanced-quad rendering (forward-Φ
+    corners via `squashTail`, translucent premultiplied fill + fwidth-AA outline).
+  - ✅ step 3 — rubber-band create: cell snap, live valid(white)/invalid(red) preview,
+    1×1 empty-click, Esc cancel, no-overlap forbid (integer AABB test).
+  - ⏳ step 4 — select (click) + delete (`Delete` key; right-click immediate delete).
+  - *CPU picking is a linear scan in cell space (add `flatbush` if counts grow). Far-from-
+    origin corner precision uses camera-relative projection in the vertex shader.*
 - v3 — Links between nodes (tessellated along their length).
 - v4 — Text & LOD (MSDF/bitmap fonts; degrade far nodes gracefully).
   - *Candidate (watch): **HTML-in-Canvas API*** (`copyElementImageToTexture`, WebGPU) to render real DOM/CSS text into a node texture we sample on the projected quad — a possible alternative to MSDF. Caveat: its interactive/accessible DOM sync uses an affine `DOMMatrix`, so it aligns only near the focus under our non-linear Φ; use render-only + our own CPU picking. Experimental (Chrome origin trial) — don't depend on it. Refs cloned to `.playground/html-in-canvas` (see `Examples/webgpu-jelly-slider`, `README.md`).
@@ -90,7 +97,9 @@ projected by Φ); no-overlap is an integer AABB test. Stored as a discrete objec
   toolbar UI, Option-B/hybrid input.
 
 ## Modules (current)
-`main.ts` (root/context/pipeline/loop/resize) · `camera.ts` (uniform schema) ·
+`main.ts` (root/context/pipelines/loop/resize) · `camera.ts` (uniform schema) ·
 `tunables.ts` (GRID/COLORS/CAMERA/TAIL/FADE/ADAPTIVE/TINT) · `projection.ts` (Φ/Φ⁻¹ +
-tails) + `projection.test.ts` · `spring.ts` · `interactions.ts` (pan/zoom/glide) ·
-`logger.ts` + `telemetry.ts` (observability) · `panel.ts` (settings UI) · `style.css`.
+tails) + `projection.test.ts` · `spring.ts` · `pointer.ts` (screen→world helpers) ·
+`interactions.ts` (pan/zoom/glide) · `rectangles.ts` (cell-AABB model + storage buffer
++ instanced-quad pipeline + Draw-tool rubber-band) · `logger.ts` + `telemetry.ts`
+(observability) · `panel.ts` (settings UI) · `style.css`.

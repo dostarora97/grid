@@ -200,10 +200,6 @@ const pipeline = root.createRenderPipeline({
 
 log.boot.info('render pipeline created — starting loop');
 
-// Rectangles on the grid — instanced quads projected by the forward Φ (§8.2, §9).
-const rectangles = createRectangles({ root, camera, format: presentationFormat });
-rectangles.seedTest(); // TEMP (step 2): verify rendering before wiring create/delete.
-
 let dirty = true;
 
 // Fractional offset of `v` within a cell of `spacing`, in f64 — the precise part
@@ -268,6 +264,18 @@ if (typeof window !== 'undefined') {
 
 // Active tool (Select/Pan vs Draw) — gates pointer behavior; not GPU state.
 const ui: UiState = { tool: 'select' };
+
+// Rectangles on the grid — instanced quads projected by the forward Φ; owns its
+// own Draw-tool pointer handling (rubber-band create). Architecture §8.2, §9.
+const rectangles = createRectangles({
+  root,
+  camera,
+  format: presentationFormat,
+  canvas,
+  cam,
+  ui,
+  markDirty,
+});
 
 // Settings panel — DOM chrome around the canvas (Architecture §16).
 const panel = createSettingsPanel({

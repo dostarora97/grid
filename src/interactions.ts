@@ -1,5 +1,6 @@
 import { clampZoom, unprojectAxis } from './projection';
 import { log } from './logger';
+import { offsetPx as offsetPxAt, worldAt as worldAtPointer } from './pointer';
 import { Spring } from './spring';
 import { CAMERA } from './tunables';
 
@@ -29,21 +30,12 @@ export function attachInteractions(
 
   /** Pointer offset from the screen center, in device px, Y-up (matches the shader). */
   function offsetPx(clientX: number, clientY: number): [number, number] {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const ox = (clientX - rect.left) * scaleX - canvas.width / 2;
-    const oy = canvas.height / 2 - (clientY - rect.top) * scaleY;
-    return [ox, oy];
+    return offsetPxAt(canvas, clientX, clientY);
   }
 
   /** World point under the cursor via Φ⁻¹, at the current camera. */
   function worldAt(clientX: number, clientY: number): [number, number] {
-    const [ox, oy] = offsetPx(clientX, clientY);
-    return [
-      cam.focusX + unprojectAxis(ox, canvas.width / 2, cam.zoom),
-      cam.focusY + unprojectAxis(oy, canvas.height / 2, cam.zoom),
-    ];
+    return worldAtPointer(canvas, cam, clientX, clientY);
   }
 
   function syncSprings(): void {
