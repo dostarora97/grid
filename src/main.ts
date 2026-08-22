@@ -4,6 +4,7 @@ import { attachInteractions, type CameraState, type UiState } from './interactio
 import { log } from './logger';
 import { createSettingsPanel, type Settings } from './panel';
 import { projectAxis } from './projection';
+import { createRectangles } from './rectangles';
 import { attachInputTelemetry } from './telemetry';
 import { ADAPTIVE, CAMERA, COLORS, FADE, GRID, TAIL, TAIL_MODE, TINT } from './tunables';
 
@@ -15,6 +16,7 @@ const canvas: HTMLCanvasElement = canvasEl;
 
 const root = await tgpu.init();
 const context = root.configureContext({ canvas, alphaMode: 'premultiplied' });
+const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
 log.boot.info('GPU ready', {
   preferredFormat: navigator.gpu.getPreferredCanvasFormat(),
@@ -193,9 +195,14 @@ const pipeline = root.createRenderPipeline({
     const out = std.mix(gridColor, LINE, axis * COLORS.axisAlpha * c.axesOn);
     return d.vec4f(out, 1);
   },
+  targets: { format: presentationFormat },
 });
 
 log.boot.info('render pipeline created — starting loop');
+
+// Rectangles on the grid — instanced quads projected by the forward Φ (§8.2, §9).
+const rectangles = createRectangles({ root, camera, format: presentationFormat });
+rectangles.seedTest(); // TEMP (step 2): verify rendering before wiring create/delete.
 
 let dirty = true;
 
@@ -333,7 +340,26 @@ function frame(now: number) {
       edgeGapPx: { x: halfW - Math.abs(originX), y: halfH - Math.abs(originY) },
     });
     writeCamera();
-    pipeline.withColorAttachment({ view: context }).draw(3);
+    // One render pass, two pipelines: clear + grid, then rectangles over it
+    // (premultiplied over-blend). Encoder API so both share the pass (§7.7).
+    const encoder = root['~unstable'].createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: context,
+          loadOp: 'clear',
+          clearValue: [0, 0, 0, 0],
+          storeOp: 'store',
+        },
+      ],
+    });
+    pipeline.with(pass).draw(3);
+    const rectCount = rectangles.count();
+    if (rectCount > 0) {
+      rectangles.pipeline.with(pass).draw(4, rectCount);
+    }
+    pass.end();
+    encoder.submit();
     dirty = false;
   }
   requestAnimationFrame(frame);
