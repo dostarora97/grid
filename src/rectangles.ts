@@ -6,8 +6,9 @@ import { worldAt } from './pointer';
 import { GRID } from './tunables';
 
 /** A rectangle = a block of grid cells (integer indices, inclusive on both ends).
- * It's the grid, shown a certain way: geometry is pure lattice; Φ warps it too. */
-export type Rect = { id: number; x0: number; y0: number; x1: number; y1: number };
+ * It's the grid, shown a certain way: geometry is pure lattice; Φ warps it too.
+ * `tex` is a runtime-only media layer index (−1/undefined = none; not persisted). */
+export type Rect = { id: number; x0: number; y0: number; x1: number; y1: number; tex?: number };
 
 /** An in-progress rubber-band candidate (cell AABB) + whether it may be committed. */
 type Preview = { x0: number; y0: number; x1: number; y1: number; valid: boolean };
@@ -15,10 +16,15 @@ type Preview = { x0: number; y0: number; x1: number; y1: number; valid: boolean 
 /** Max rectangles + preview held in the storage buffer (v2; grows later if needed). */
 const CAP = 256;
 
-/** Per-rectangle GPU record: world-space corners + a discrete state flag.
- * flags: 0 = normal, 1 = selected, 2 = preview-valid, 3 = preview-invalid,
- * 4 = center ghost (fly-mode "will stamp here" reticle cell). */
-const RectGPU = d.struct({ min: d.vec2f, max: d.vec2f, flags: d.f32 });
+/** Media texture array — per-node images/gifs sampled onto the quad. Square layers
+ * (aspect handled by the node's cell block); modest count/size to bound VRAM. */
+const MEDIA_LAYERS = 64;
+const MEDIA_SIZE = 256;
+
+/** Per-rectangle GPU record: world-space corners + a discrete state flag + a media
+ * texture-array layer (`tex`, −1 = none). flags: 0 = normal, 1 = selected,
+ * 2 = preview-valid, 3 = preview-invalid, 4 = center ghost. */
+const RectGPU = d.struct({ min: d.vec2f, max: d.vec2f, flags: d.f32, tex: d.f32 });
 
 // Appearance (translucent fill + crisp outline; direction-tint shows through).
 const FILL_ALPHA = 0.1;
@@ -113,6 +119,44 @@ export function createRectangles(opts: {
   const buffer = root.createBuffer(d.arrayOf(RectGPU, CAP)).$usage('storage');
   const store = buffer.as('readonly');
 
+  // Media: a texture array (one layer per textured node) + sampler, bound to the
+  // rect pipeline so the fragment can sample a node's image. Layers are allocated
+  // round-robin; the node's `tex` holds its layer (−1 = untextured → flat fill).
+  const mediaTex = root
+    .createTexture({ size: [MEDIA_SIZE, MEDIA_SIZE, MEDIA_LAYERS], format: 'rgba8unorm' })
+    .$usage('sampled', 'render');
+  const mediaView = mediaTex.createView(d.texture2dArray(d.f32));
+  const mediaSampler = root.createSampler({
+    magFilter: 'linear',
+    minFilter: 'linear',
+    addressModeU: 'clamp-to-edge',
+    addressModeV: 'clamp-to-edge',
+  });
+  const mediaLayout = tgpu.bindGroupLayout({
+    tex: { texture: d.texture2dArray(d.f32) },
+    samp: { sampler: 'filtering' },
+  });
+  const mediaBindGroup = root.createBindGroup(mediaLayout, { tex: mediaView, samp: mediaSampler });
+  let nextLayer = 0;
+
+  /** Upload an image source (canvas/bitmap) to the node's media layer and show it. */
+  function setImage(id: number, source: GPUCopyExternalImageSource): void {
+    const layer = nextLayer % MEDIA_LAYERS;
+    nextLayer += 1;
+    root.device.queue.copyExternalImageToTexture(
+      { source, flipY: true },
+      { texture: root.unwrap(mediaTex), origin: [0, 0, layer] },
+      [MEDIA_SIZE, MEDIA_SIZE],
+    );
+    const r = rects.find((x) => x.id === id);
+    if (r) {
+      r.tex = layer;
+      sync();
+      markDirty();
+    }
+    log.input.debug('rect:media:set', { id, layer });
+  }
+
   /** Instances to draw = committed rects + a live preview + a center ghost (each optional). */
   const count = (): number => Math.min(rects.length + (preview ? 1 : 0) + (ghostCell ? 1 : 0), CAP);
 
@@ -121,12 +165,13 @@ export function createRectangles(opts: {
    * each frame the center cell changes (a moving HUD element; still ≤CAP structs). */
   function sync(): void {
     const g = GRID.spacing;
-    const extras: { min: d.v2f; max: d.v2f; flags: number }[] = [];
+    const extras: { min: d.v2f; max: d.v2f; flags: number; tex: number }[] = [];
     if (preview) {
       extras.push({
         min: d.vec2f(preview.x0 * g, preview.y0 * g),
         max: d.vec2f((preview.x1 + 1) * g, (preview.y1 + 1) * g),
         flags: preview.valid ? 2 : 3,
+        tex: -1,
       });
     }
     if (ghostCell) {
@@ -134,6 +179,7 @@ export function createRectangles(opts: {
         min: d.vec2f(ghostCell[0] * g, ghostCell[1] * g),
         max: d.vec2f((ghostCell[0] + 1) * g, (ghostCell[1] + 1) * g),
         flags: 4,
+        tex: -1,
       });
     }
     const data = Array.from({ length: CAP }, (_unused, i) => {
@@ -143,9 +189,12 @@ export function createRectangles(opts: {
           min: d.vec2f(r.x0 * g, r.y0 * g),
           max: d.vec2f((r.x1 + 1) * g, (r.y1 + 1) * g),
           flags: r.id === selectedId ? 1 : 0,
+          tex: r.tex ?? -1,
         };
       }
-      return extras[i - rects.length] ?? { min: d.vec2f(0, 0), max: d.vec2f(0, 0), flags: 0 };
+      return (
+        extras[i - rects.length] ?? { min: d.vec2f(0, 0), max: d.vec2f(0, 0), flags: 0, tex: -1 }
+      );
     });
     buffer.write(data);
   }
@@ -333,6 +382,17 @@ export function createRectangles(opts: {
     onChange?.();
   }
 
+  /** Create a rectangle directly (seeding / programmatic); returns its id. */
+  function addRect(x0: number, y0: number, x1: number, y1: number): number {
+    const r: Rect = { id: nextId, x0, y0, x1, y1 };
+    nextId += 1;
+    rects.push(r);
+    sync();
+    markDirty();
+    onChange?.();
+    return r.id;
+  }
+
   // --- Pointer handling. Draw tool = rubber-band create; Select tool = click to
   //     select (a drag pans, handled in interactions.ts); right-click = delete under
   //     the cursor (any tool). A press that moves past CLICK_SLOP is a drag, not a click.
@@ -464,7 +524,7 @@ export function createRectangles(opts: {
 
   const vertex = tgpu.vertexFn({
     in: { vid: d.builtin.vertexIndex, iid: d.builtin.instanceIndex },
-    out: { pos: d.builtin.position, uv: d.vec2f, flags: d.f32 },
+    out: { pos: d.builtin.position, uv: d.vec2f, flags: d.f32, tex: d.f32 },
   })((input) => {
     'use gpu';
     const r = store.$[input.iid];
@@ -498,11 +558,11 @@ export function createRectangles(opts: {
     const clipIso = cc + (rel * halfSize * s) / half;
 
     const clip = std.mix(clipAniso, clipIso, camera.$.isoMode);
-    return { pos: d.vec4f(clip.x, clip.y, 0, 1), uv: corner, flags: r.flags };
+    return { pos: d.vec4f(clip.x, clip.y, 0, 1), uv: corner, flags: r.flags, tex: r.tex };
   });
 
   const fragment = tgpu.fragmentFn({
-    in: { uv: d.vec2f, flags: d.f32 },
+    in: { uv: d.vec2f, flags: d.f32, tex: d.f32 },
     out: d.vec4f,
   })((input) => {
     'use gpu';
@@ -539,10 +599,27 @@ export function createRectangles(opts: {
       isGhost * d.f32(GHOST_OUTLINE_BOOST);
     const a = std.max(fillA, outline * outlineA);
 
-    // White normally; red when the preview would overlap (invalid).
-    const color = std.mix(d.vec3f(1, 1, 1), d.vec3f(1, 0.28, 0.28), isInvalid);
+    // Base (untextured) look: white normally, red for an invalid preview.
+    const baseRGB = std.mix(d.vec3f(1, 1, 1), d.vec3f(1, 0.28, 0.28), isInvalid);
+
+    // Textured nodes: sample the media layer (uniform control flow — sample
+    // unconditionally at a clamped layer, then blend in only when tex ≥ 0).
+    const layer = input.tex;
+    const hasTex = std.select(d.f32(0), d.f32(1), layer > d.f32(-0.5));
+    const img = std.textureSample(
+      mediaLayout.$.tex,
+      mediaLayout.$.samp,
+      input.uv,
+      d.i32(std.max(layer, d.f32(0))),
+    );
+    const oA = outline * outlineA;
+    const texA = std.max(img.w, oA); // image alpha, but always show the outline
+    const texRGB = std.mix(img.xyz, d.vec3f(1, 1, 1), oA); // whiten at the outline
+
+    const finalA = std.mix(a, texA, hasTex);
+    const finalRGB = std.mix(baseRGB, texRGB, hasTex);
     // Premultiplied (matches the 'premultiplied' canvas + over blend).
-    return d.vec4f(color * a, a);
+    return d.vec4f(finalRGB * finalA, finalA);
   });
 
   const pipeline = root.createRenderPipeline({
@@ -558,10 +635,20 @@ export function createRectangles(opts: {
     },
   });
 
+  /** The render pipeline with the media (texture array + sampler) bind group bound.
+   * Caller adds the pass and draw: `withMedia().with(pass).draw(4, count())`. */
+  function withMedia() {
+    return pipeline.with(mediaLayout, mediaBindGroup);
+  }
+
   return {
     pipeline,
+    withMedia,
     rects,
     count,
+    // Media:
+    setImage,
+    addRect,
     // Fly-mode driving API (see fly.ts):
     centerCell,
     setGhost,

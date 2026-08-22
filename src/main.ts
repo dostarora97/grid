@@ -303,6 +303,39 @@ if (savedScene) {
   markDirty();
   log.boot.info('scene restored', { rects: savedScene.rects.length });
 }
+if (rectangles.rects.length === 0) {
+  // TEMP (media Phase 1): seed one node with a generated test image to verify the
+  // texture → quad path. Removed once GIPHY placement lands.
+  const testId = rectangles.addRect(-4, -3, 3, 3);
+  rectangles.setImage(testId, makeTestImage());
+}
+
+/** Generate a 256² test image (checker + gradient + label) — proves the texture path. */
+function makeTestImage(): OffscreenCanvas {
+  const cv = new OffscreenCanvas(256, 256);
+  const g = cv.getContext('2d');
+  if (g) {
+    const grad = g.createLinearGradient(0, 0, 256, 256);
+    grad.addColorStop(0, '#ff5d8f');
+    grad.addColorStop(1, '#4fa3ff');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 256, 256);
+    g.fillStyle = 'rgba(255,255,255,0.15)';
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        if ((x + y) % 2 === 0) {
+          g.fillRect(x * 32, y * 32, 32, 32);
+        }
+      }
+    }
+    g.fillStyle = '#fff';
+    g.font = 'bold 40px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('TEST', 128, 128);
+  }
+  return cv;
+}
 
 // Flush the latest state (incl. camera view) when the tab is hidden or closed.
 const flush = (): void => {
@@ -474,7 +507,7 @@ function frame(now: number) {
     pipeline.with(pass).draw(3);
     const rectCount = rectangles.count();
     if (rectCount > 0) {
-      rectangles.pipeline.with(pass).draw(4, rectCount);
+      rectangles.withMedia().with(pass).draw(4, rectCount);
     }
     pass.end();
     encoder.submit();
