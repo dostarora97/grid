@@ -43,10 +43,12 @@ if (typeof window !== 'undefined') {
 // Adaptive-grid structure (inlined into the shader as literals).
 const LEVELS = ADAPTIVE.levels;
 const BASE = ADAPTIVE.base;
+// Levels on by default: the finest 5 (G·5ⁿ → 40, 200, 1k, 5k, 25k); coarser off.
+const DEFAULT_ON_LEVELS = 5;
 
 /** Live render settings, driven by the settings panel and uploaded each frame. */
 const settings: Settings = {
-  levels: Array.from({ length: LEVELS }, () => true),
+  levels: Array.from({ length: LEVELS }, (_unused, n) => n < DEFAULT_ON_LEVELS),
   fadeStartPx: FADE.startPx,
   fadeEndPx: FADE.endPx,
   lineAlpha: ADAPTIVE.alpha,
