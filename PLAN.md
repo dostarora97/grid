@@ -99,6 +99,25 @@ serialization — is now BUILT on the fly branch: see Experiments.)*
   by `isoMode`); the grid is untouched. Verified the toggle live in Chrome. *Decide
   whether isotropic should be per-node vs global, and whether the grid should follow.*
 
+- **Media in nodes (GIPHY) — planned on `exp/isotropic-mode`.** Fill rectangles with
+  images/gifs **as GPU textures painted on the projected quad** (on-canvas, warps with Φ,
+  no DOM → no drift). Decided approach (perf-first): static images via
+  `createImageBitmap` → texture; **animated via GIPHY's mp4 rendition through a hidden
+  `<video>` → `copyExternalImageToTexture` per frame** (hardware-decoded, beats GIF).
+  HTML-in-Canvas (`copyElementImageToTexture`, flag/origin-trial — fine for our opted-in
+  users) is reserved for *arbitrary HTML/text* later, not needed for GIPHY media. Same
+  render path either way ("fill a texture, sample the quad") so it's rework-free.
+  - Rendering: a per-instance texture layer — `RectGPU` gains a `tex` index into a
+    **texture array**; the rect fragment samples it when set, else the flat fill. One
+    pipeline. (Video/external-texture path added when animation lands.)
+  - GIPHY: `/v1/gifs/search` etc.; key in `.env.local` (`VITE_GIPHY_API_KEY`). Persist
+    the giphy id + rendition URL (not bytes) → reload re-fetches from CDN. "Powered By
+    GIPHY" attribution required. See `.playground/giphy-notes.md`.
+  - Placement: pick a result (search) → node dropped at the target cell, snapped to the
+    image aspect. Interactivity in-node stays deferred.
+  - Phases: (1) textured-quad foundation [hardcoded image] · (2) GIPHY search + place ·
+    (3) animated mp4 playback · (4) persist refs · (5) LOD / rendition upgrades.
+
 ## v2 design — rectangles (decided)
 Conceptual model: **a rectangle is a contiguous block of grid cells, given a fill** —
 an annotation on the same lattice, not a new coordinate system. Geometry is **integer
