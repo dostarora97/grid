@@ -1,7 +1,7 @@
 import { common, d, std, tgpu } from 'typegpu';
 import { CameraStruct } from './camera';
 import { attachInteractions, type CameraState } from './interactions';
-import { CAMERA, COLORS, GRID } from './tunables';
+import { CAMERA, COLORS, GRID, TAIL, TAIL_MODE } from './tunables';
 
 const canvasEl = document.querySelector<HTMLCanvasElement>('#canvas');
 if (!canvasEl) {
@@ -19,6 +19,7 @@ const camera = root.createUniform(CameraStruct, {
   focus: d.vec2f(0, 0),
   zoom: cam.zoom,
   resolution: d.vec2f(1, 1),
+  tailMode: TAIL_MODE[TAIL],
 });
 
 // Colors captured by the shader as GPU constants.
@@ -39,6 +40,23 @@ function lineCoverage(distPx: number, halfPx: number): number {
   return d.f32(1) - std.smoothstep(d.f32(halfPx), d.f32(halfPx) + d.f32(1), distPx);
 }
 
+/**
+ * Inverse Φ tail (screen→world), one axis, in normalized coords u ∈ (−1,1) → p
+ * (where p = z·d/W). Branch is on the uniform `mode` — uniform control flow, so
+ * the later fwidth stays valid: 0 = rational (u/(1−|u|)), 1 = tanh (atanh),
+ * 2 = atan (tan). Mirrors TAILS in projection.ts (Architecture §7.7).
+ */
+function expandTail(u: number, mode: number): number {
+  'use gpu';
+  if (mode > 1.5) {
+    return (2 / Math.PI) * std.tan((Math.PI / 2) * u);
+  }
+  if (mode > 0.5) {
+    return 0.5 * std.log((1 + u) / (1 - u));
+  }
+  return u / (1 - std.abs(u));
+}
+
 const pipeline = root.createRenderPipeline({
   vertex: common.fullScreenTriangle,
   fragment: ({ uv }) => {
@@ -49,15 +67,15 @@ const pipeline = root.createRenderPipeline({
     // Flip Y so world-Y increases upward (math convention).
     const off = d.vec2f((uv.x - 0.5) * c.resolution.x, (0.5 - uv.y) * c.resolution.y);
 
-    // Separable inverse projection Φ⁻¹ (Architecture §7.3): recover the world
-    // point under this pixel, per-axis. With half-extents (Wx, Wy) and NDC-like
-    // coords u = ox/Wx, v = oy/Wy (each in (−1,1), clamped off the edge
-    // singularity):  dx = u·Wx / (z·(1−|u|)),  dy = v·Wy / (z·(1−|v|)).
-    // Near the edge the denominator → 0 so world → ∞ — this is correct: gridlines
-    // bunch infinitely toward the frame edge (the signature of infinity).
+    // Separable inverse projection Φ⁻¹ (Architecture §7.3, §7.7): recover the
+    // world point under this pixel, per-axis. u = ox/Wx, v = oy/Wy (NDC-like,
+    // clamped off the edge singularity); the selected tail expands them back to
+    // world deltas. Near the edge the map → ∞ — correct: gridlines bunch
+    // infinitely toward the frame edge (the signature of infinity).
     const half = c.resolution * 0.5;
     const ndc = std.clamp(off / half, d.vec2f(-0.999999, -0.999999), d.vec2f(0.999999, 0.999999));
-    const world = c.focus + (ndc * half) / (c.zoom * (d.vec2f(1, 1) - std.abs(ndc)));
+    const p = d.vec2f(expandTail(ndc.x, c.tailMode), expandTail(ndc.y, c.tailMode));
+    const world = c.focus + (p * half) / c.zoom;
 
     // Analytic gridlines via screen-space derivatives (Architecture §7.5):
     // distance to the nearest line, measured in pixels. Take fwidth of the
@@ -99,6 +117,7 @@ function writeCamera() {
     focus: d.vec2f(cam.focusX, cam.focusY),
     zoom: cam.zoom,
     resolution: d.vec2f(canvas.width, canvas.height),
+    tailMode: TAIL_MODE[TAIL],
   });
 }
 

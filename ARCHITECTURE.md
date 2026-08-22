@@ -1,7 +1,7 @@
 # Architecture.md
 
 **Project:** Infinite Rectangular Canvas *(a separable-projection infinite canvas)*
-**Status:** v0.4 (living document — this is the source of truth)
+**Status:** v0.5 (living document — this is the source of truth; v1 built & verified)
 **Audience:** the autonomous coding agent building this project, and its human owner.
 
 ---
@@ -431,6 +431,18 @@ Update this roadmap as reality diverges.
 ---
 
 ## 18. Change Log (keep updated; commit with each change)
+
+- **v0.5** — **v1 built and verified** (Definition of Done §14 met). Summary of the built state:
+  - **Toolchain:** scaffolded canonically via the TypeGPU CLI (`vite-bare`) — **Vite 8 + TypeScript (tsover)**, `unplugin-typegpu`, `@webgpu/types`, `oxlint`/`oxfmt`, `eslint-plugin-typegpu`. Runs in Chrome with no console errors; production `build` clean. (Corrected the doc's stale "Bun first-class plugin" lean: the actively-maintained `unplugin-typegpu` targets are Vite/Rollup + Babel.)
+  - **Render:** single full-screen pass — `common.fullScreenTriangle` + a TGSL `'use gpu'` fragment reading one `Camera` uniform (`focus`, `zoom`, `resolution`, `tailMode`) via `root.createUniform`. Analytic grid — minor lines, major every `M=5`, emphasized origin cross — anti-aliased with `std.fwidth` on the smooth `world/spacing` field.
+  - **Projection:** **Φ⁻¹ in the fragment** (§7.3). Lines stay perfectly axis-aligned; cells are full-scale at the focus and compress toward all four edges with a density gradient; corners reachable.
+  - **Interactions** (§7.6): pan (grab-and-pull), zoom-about-cursor, focus-glide (critically-damped, interruptible `Spring`). All mutate only camera state; CPU `Φ`/`Φ⁻¹` twins live in `projection.ts`.
+  - **Sigmoid tail** (§7.7) is **swappable at runtime** via the `tailMode` uniform — `rational` (default) / `tanh` / `atan`, each normalized to unit magnification at the focus.
+  - **Tests:** 28 Vitest cases (`src/projection.test.ts`) — Φ/Φ⁻¹ round-trip, edges-at-infinity (`|d|→∞ → ±W`), focus magnification ≈ z, zoom-about-cursor invariance, oddness — green across all three tails.
+  - **Performance:** sustained the display's full **120 Hz** (p50 frame interval 8.3 ms, p95 9.3 ms) at 3456×1814 device px during continuous pan+zoom — well beyond the ~60 fps target. Method: in-page `requestAnimationFrame` timing over 2 s of continuous synthetic interaction.
+  - **Tunables** (`src/tunables.ts`): `G`, `M`, minor/major/axis colors+weights, zoom clamp + wheel sensitivity, `TAIL`, DPR cap (=2), default zoom.
+  - **Modules:** `main.ts` (root/context/pipeline/loop/DPR-capped resize), `camera.ts` (uniform schema), `tunables.ts`, `projection.ts` (Φ/Φ⁻¹ + tails), `spring.ts`, `interactions.ts`.
+  - **Deferred (roadmap §16):** optional hover cell-highlight + coordinate readout (kept the pass single and simple), isotropic mode, rectangles/nodes and everything beyond. A full clone of the TypeGPU repo lives in the git-ignored `.playground/` for local docs.
 
 - **v0.4** — Converted the document to **positive-only steering**. Replaced the terminology section with a vivid statement of the intended mental model and vocabulary (no forbidden-word list, which would only prime the wrong ideas for an LLM). Recast the design rationale (5.3–5.4), the grid's guarantees (6.6), the guardrails (15), the directives (7), and the Definition of Done (14) as affirmative statements of what to build, rather than catalogs of what to avoid. Every constraint is now expressed as a property to uphold.
 - **v0.3** — Added Section 6 ("The Grid"): a full, vivid, exhaustive definition of the grid as an orthogonal vertical+horizontal lattice of square cells (graph-paper/blueprint model), with appearance spec, behavioral guarantees under the projection, affordances, and interaction affordances. Foregrounded the grid in the Mission and threaded it through the math (7.5), rendering (8.1), data model (9), methodology (12), testing (13), Definition of Done (14), guardrails (15), roadmap (16), and open questions (17). Renumbered sections 6→7 onward.

@@ -38,3 +38,15 @@ export const CAMERA = {
   /** devicePixelRatio cap (Architecture §7.7). */
   dprCap: 2,
 } as const;
+
+/**
+ * The Φ tail (Architecture §7.7) — how fast distant content compresses toward
+ * the edge. 'rational' has a heavy 1/d tail (keeps the most far context),
+ * 'tanh' an exponential tail (keeps the least), 'atan' sits between. A genuine,
+ * swappable design knob; anisotropic distortion is locked for v1.
+ */
+export type TailKind = 'rational' | 'tanh' | 'atan';
+export const TAIL: TailKind = 'rational';
+
+/** Numeric tail selector uploaded in the camera uniform (must match the shader). */
+export const TAIL_MODE: Record<TailKind, number> = { rational: 0, tanh: 1, atan: 2 };

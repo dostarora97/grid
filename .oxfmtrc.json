@@ -1,4 +1,4 @@
 {
   "singleQuote": true,
-  "ignorePatterns": [".agents/**"]
+  "ignorePatterns": [".agents/**", "**/*.md"]
 }

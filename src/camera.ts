@@ -14,4 +14,6 @@ export const CameraStruct = d.struct({
   focus: d.vec2f,
   zoom: d.f32,
   resolution: d.vec2f,
+  /** Φ tail selector: 0 = rational, 1 = tanh, 2 = atan (Architecture §7.7). */
+  tailMode: d.f32,
 });
