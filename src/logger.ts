@@ -3,20 +3,20 @@ import { Logger } from 'tslog';
 /*
  * Verbose, structured, timestamped logging for the whole app (tslog).
  *
- * Fully verbose by default (minLevel = SILLY = 0). The high-frequency streams —
- * raw input and per-frame renders — log at SILLY/TRACE, so you can quiet the
- * firehose live from the console without a rebuild:
+ * Default minLevel = DEBUG (2): DEBUG and above render; the high-frequency SILLY/
+ * TRACE streams (raw input, per-frame renders) stay in the code but are silenced.
+ * Toggle live from the console without a rebuild:
  *
+ *     gridLog.settings.minLevel = 0   // fully verbose (SILLY — the firehose)
  *     gridLog.settings.minLevel = 3   // INFO and above only
- *     gridLog.settings.minLevel = 0   // back to fully verbose
  *
  * Levels: 0 SILLY · 1 TRACE · 2 DEBUG · 3 INFO · 4 WARN · 5 ERROR · 6 FATAL.
  * Objects are passed through whole (not field-by-field) so the browser console
  * shows them expandable; every line carries a timestamp and a subsystem name.
  */
 
-/** Default verbosity — SILLY captures everything. Raise it to tame the console. */
-const MIN_LEVEL = 0;
+/** Default verbosity — DEBUG. Drop to 0 (SILLY) for the input/frame firehose. */
+const MIN_LEVEL = 2;
 
 export const rootLog = new Logger({ name: 'grid', minLevel: MIN_LEVEL, type: 'pretty' });
 

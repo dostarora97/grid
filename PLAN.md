@@ -25,8 +25,9 @@ verified.** All pushed to `origin/main`.
   edge (an edge indicator / minimap arrow)?
 
 ## Open tasks / debts
-- **Logging default is SILLY (fully verbose)** — dial to DEBUG and/or gate to dev-only
-  (`import.meta.env.DEV`) before any "production" use.
+- **Logging** — default `minLevel` is now **DEBUG** (SILLY/TRACE firehose silenced but
+  kept in code; `gridLog.settings.minLevel = 0` re-enables live). Still to do: gate to
+  dev-only (`import.meta.env.DEV`) before any "production" use.
 - **More tests** — only `projection.test.ts` (math) exists; spring + interaction logic
   are untested.
 - **ARCHITECTURE.md** — spec sections carry inline "Built (v0.6)" notes + a full v0.6
