@@ -52,8 +52,8 @@ export function attachInteractions(
   let lastOx = 0;
   let lastOy = 0;
   canvas.addEventListener('pointerdown', (e) => {
-    if (ui.tool !== 'select') {
-      return; // Draw tool handles its own pointer events (see rectangles module).
+    if (ui.tool !== 'select' || e.button !== 0) {
+      return; // Draw tool handles its own pointer events; non-left buttons don't pan.
     }
     try {
       canvas.setPointerCapture(e.pointerId);

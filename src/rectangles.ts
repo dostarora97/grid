@@ -25,6 +25,7 @@ const SELECTED_FILL_ALPHA = 0.22;
 const PREVIEW_FILL_ALPHA = 0.16;
 const OUTLINE_ALPHA = 0.7;
 const PREVIEW_OUTLINE_BOOST = 0.25;
+const SELECTED_OUTLINE_BOOST = 0.3;
 const OUTLINE_PX = 1.5;
 
 type Root = Awaited<ReturnType<typeof tgpu.init>>;
@@ -132,68 +133,130 @@ export function createRectangles(opts: {
     return { ...c, valid: rects.length < CAP && !overlapsAny(c) };
   }
 
-  // --- Draw-tool pointer handling (Select-tool pan/glide lives in interactions). ---
-  canvas.addEventListener('pointerdown', (e) => {
-    if (ui.tool !== 'draw' || e.button !== 0) {
+  /** The rectangle whose cell-AABB contains the cursor's cell (at most one — no
+   * overlaps), or null. Linear scan in cell space (add flatbush if counts grow). */
+  function pickAt(clientX: number, clientY: number): Rect | null {
+    const [cx, cy] = cellAt(clientX, clientY);
+    return rects.find((r) => cx >= r.x0 && cx <= r.x1 && cy >= r.y0 && cy <= r.y1) ?? null;
+  }
+
+  function deleteById(id: number): void {
+    const i = rects.findIndex((r) => r.id === id);
+    if (i < 0) {
       return;
     }
-    try {
-      canvas.setPointerCapture(e.pointerId);
-    } catch {
-      // Best-effort capture; ignore for synthetic/uncaptured pointers.
+    rects.splice(i, 1);
+    if (selectedId === id) {
+      selectedId = null;
     }
-    dragging = true;
-    anchor = cellAt(e.clientX, e.clientY);
-    preview = candidate(anchor, anchor);
     sync();
     markDirty();
-    log.input.debug('rect:draw:start', { anchorCell: anchor, valid: preview.valid });
+  }
+
+  // --- Pointer handling. Draw tool = rubber-band create; Select tool = click to
+  //     select (a drag pans, handled in interactions.ts); right-click = delete under
+  //     the cursor (any tool). A press that moves past CLICK_SLOP is a drag, not a click.
+  const CLICK_SLOP = 4; // client px
+  let selDown: [number, number] | null = null;
+  let selMoved = false;
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) {
+      return; // left button only; right-click is handled by contextmenu
+    }
+    if (ui.tool === 'draw') {
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {
+        // Best-effort capture; ignore for synthetic/uncaptured pointers.
+      }
+      dragging = true;
+      anchor = cellAt(e.clientX, e.clientY);
+      preview = candidate(anchor, anchor);
+      sync();
+      markDirty();
+      log.input.debug('rect:draw:start', { anchorCell: anchor, valid: preview.valid });
+      return;
+    }
+    // Select tool: remember the press; a click (no drag) selects on release.
+    selDown = [e.clientX, e.clientY];
+    selMoved = false;
   });
 
   canvas.addEventListener('pointermove', (e) => {
-    if (!dragging || !anchor) {
+    if (dragging && anchor) {
+      preview = candidate(anchor, cellAt(e.clientX, e.clientY));
+      sync();
+      markDirty();
+      log.input.silly('rect:draw:move', { preview });
       return;
     }
-    preview = candidate(anchor, cellAt(e.clientX, e.clientY));
-    sync();
-    markDirty();
-    log.input.silly('rect:draw:move', { preview });
+    if (selDown && !selMoved) {
+      if (Math.hypot(e.clientX - selDown[0], e.clientY - selDown[1]) > CLICK_SLOP) {
+        selMoved = true; // became a pan
+      }
+    }
   });
 
-  const endDraw = (e: PointerEvent): void => {
-    if (!dragging) {
+  const onPointerEnd = (e: PointerEvent): void => {
+    if (dragging) {
+      dragging = false;
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        // Nothing to release for synthetic/uncaptured pointers.
+      }
+      if (preview?.valid) {
+        const r: Rect = {
+          id: nextId,
+          x0: preview.x0,
+          y0: preview.y0,
+          x1: preview.x1,
+          y1: preview.y1,
+        };
+        nextId += 1;
+        rects.push(r);
+        log.input.debug('rect:create', { rect: r, total: rects.length });
+      } else {
+        log.input.debug('rect:draw:reject', { reason: preview ? 'overlap' : 'none' });
+      }
+      preview = null;
+      anchor = null;
+      sync();
+      markDirty();
       return;
     }
-    dragging = false;
-    try {
-      canvas.releasePointerCapture(e.pointerId);
-    } catch {
-      // Nothing to release for synthetic/uncaptured pointers.
+    if (selDown) {
+      if (!selMoved) {
+        // A click (not a pan): select the rectangle under the cursor, or deselect.
+        const hit = pickAt(e.clientX, e.clientY);
+        const next = hit ? hit.id : null;
+        if (next !== selectedId) {
+          selectedId = next;
+          sync();
+          markDirty();
+        }
+        log.input.debug('rect:select', { selectedId });
+      }
+      selDown = null;
+      selMoved = false;
     }
-    if (preview?.valid) {
-      const r: Rect = {
-        id: nextId,
-        x0: preview.x0,
-        y0: preview.y0,
-        x1: preview.x1,
-        y1: preview.y1,
-      };
-      nextId += 1;
-      rects.push(r);
-      log.input.debug('rect:create', { rect: r, total: rects.length });
-    } else {
-      log.input.debug('rect:draw:reject', { reason: preview ? 'overlap' : 'none' });
-    }
-    preview = null;
-    anchor = null;
-    sync();
-    markDirty();
   };
-  canvas.addEventListener('pointerup', endDraw);
-  canvas.addEventListener('pointercancel', endDraw);
+  canvas.addEventListener('pointerup', onPointerEnd);
+  canvas.addEventListener('pointercancel', onPointerEnd);
 
-  // Esc cancels an in-progress rubber-band (no rectangle created).
+  // Right-click: immediate delete of the rectangle under the cursor (no menu).
+  canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const hit = pickAt(e.clientX, e.clientY);
+    if (hit) {
+      deleteById(hit.id);
+      log.input.debug('rect:delete:context', { id: hit.id, total: rects.length });
+    }
+  });
+
   window.addEventListener('keydown', (e) => {
+    // Esc cancels an in-progress rubber-band (no rectangle created).
     if (e.key === 'Escape' && dragging) {
       dragging = false;
       preview = null;
@@ -201,6 +264,23 @@ export function createRectangles(opts: {
       sync();
       markDirty();
       log.input.debug('rect:draw:esc');
+      return;
+    }
+    // Delete/Backspace removes the selected rectangle (ignored while typing in the panel).
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      const target = e.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' || target.tagName === 'SELECT')
+      ) {
+        return;
+      }
+      if (selectedId !== null) {
+        e.preventDefault();
+        const id = selectedId;
+        deleteById(id);
+        log.input.debug('rect:delete:key', { id, total: rects.length });
+      }
     }
   });
 
@@ -248,7 +328,10 @@ export function createRectangles(opts: {
       d.f32(FILL_ALPHA) * (d.f32(1) - isSelected) * (d.f32(1) - isPreview) +
       d.f32(SELECTED_FILL_ALPHA) * isSelected +
       d.f32(PREVIEW_FILL_ALPHA) * isPreview;
-    const outlineA = d.f32(OUTLINE_ALPHA) + isPreview * d.f32(PREVIEW_OUTLINE_BOOST);
+    const outlineA =
+      d.f32(OUTLINE_ALPHA) +
+      isPreview * d.f32(PREVIEW_OUTLINE_BOOST) +
+      isSelected * d.f32(SELECTED_OUTLINE_BOOST);
     const a = std.max(fillA, outline * outlineA);
 
     // White normally; red when the preview would overlap (invalid).
