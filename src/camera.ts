@@ -16,4 +16,15 @@ export const CameraStruct = d.struct({
   resolution: d.vec2f,
   /** Φ tail selector: 0 = rational, 1 = tanh, 2 = atan (Architecture §7.7). */
   tailMode: d.f32,
+  /**
+   * The focus's fractional offset within a minor / major cell, computed on the
+   * CPU in f64. The grid phase is measured *relative to the focus* using these,
+   * so the shader's `fract` only ever sees small numbers — this is what keeps
+   * the lattice crisp arbitrarily far from the origin (translation invariance;
+   * Architecture §8.3). Only the fractional part matters to `fract`, so these
+   * carry all the position information the grid needs, with none of the
+   * precision-destroying magnitude.
+   */
+  focusMinorFrac: d.vec2f,
+  focusMajorFrac: d.vec2f,
 });

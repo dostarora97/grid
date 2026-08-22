@@ -2,6 +2,7 @@ import { common, d, std, tgpu } from 'typegpu';
 import { CameraStruct } from './camera';
 import { attachInteractions, type CameraState } from './interactions';
 import { log } from './logger';
+import { projectAxis } from './projection';
 import { attachInputTelemetry } from './telemetry';
 import { CAMERA, COLORS, GRID, TAIL, TAIL_MODE } from './tunables';
 
@@ -25,11 +26,23 @@ log.boot.debug('tunables', { GRID, COLORS, CAMERA, TAIL, tailMode: TAIL_MODE[TAI
 // CPU-side camera state — the whole per-frame upload (Architecture §7.1, §8.3).
 const cam: CameraState = { focusX: 0, focusY: 0, zoom: CAMERA.defaultZoom };
 
+declare global {
+  interface Window {
+    /** Live camera state, exposed for debugging/inspection. */
+    gridCam: CameraState;
+  }
+}
+if (typeof window !== 'undefined') {
+  window.gridCam = cam;
+}
+
 const camera = root.createUniform(CameraStruct, {
   focus: d.vec2f(0, 0),
   zoom: cam.zoom,
   resolution: d.vec2f(1, 1),
   tailMode: TAIL_MODE[TAIL],
+  focusMinorFrac: d.vec2f(0, 0),
+  focusMajorFrac: d.vec2f(0, 0),
 });
 
 // Colors captured by the shader as GPU constants.
@@ -85,13 +98,20 @@ const pipeline = root.createRenderPipeline({
     const half = c.resolution * 0.5;
     const ndc = std.clamp(off / half, d.vec2f(-0.999999, -0.999999), d.vec2f(0.999999, 0.999999));
     const p = d.vec2f(expandTail(ndc.x, c.tailMode), expandTail(ndc.y, c.tailMode));
-    const world = c.focus + (p * half) / c.zoom;
+    // `delta` is the world offset from the focus (small near the center). We keep
+    // the grid phase *relative to the focus* — adding the CPU-computed fractional
+    // cell offset — so fract() only sees small numbers and the lattice stays
+    // crisp arbitrarily far from the origin (translation invariance).
+    const delta = (p * half) / c.zoom;
+    // `world` is the absolute coordinate, used only for the origin axes — precise
+    // in f32 exactly when it matters (the origin is only in view when |focus| is
+    // small); far from the origin the axes sit in the edge wash anyway.
+    const world = c.focus + delta;
 
-    // Analytic gridlines via screen-space derivatives (Architecture §7.5):
-    // distance to the nearest line, measured in pixels. Take fwidth of the
-    // SMOOTH field (world · invSpacing), never of fract.
-    const minorCell = world * INV_MINOR;
-    const majorCell = world * INV_MAJOR;
+    // Analytic gridlines via screen-space derivatives (Architecture §7.5, §8.3):
+    // fract of (relative cell offset + focus's fractional cell offset).
+    const minorCell = delta * INV_MINOR + c.focusMinorFrac;
+    const majorCell = delta * INV_MAJOR + c.focusMajorFrac;
 
     const minorD = std.abs(std.fract(minorCell - 0.5) - 0.5) / std.fwidth(minorCell);
     const majorD = std.abs(std.fract(majorCell - 0.5) - 0.5) / std.fwidth(majorCell);
@@ -124,12 +144,32 @@ log.boot.info('render pipeline created — starting loop');
 
 let dirty = true;
 
+// Fractional offset of `v` within a cell of `spacing`, in f64 — the precise part
+// the grid phase needs, with the huge integer magnitude discarded before it can
+// reach the GPU's f32 (Architecture §8.3).
+function cellFraction(v: number, spacing: number): number {
+  const q = v / spacing;
+  return q - Math.floor(q);
+}
+
 function writeCamera() {
+  const minorSpacing = GRID.spacing;
+  const majorSpacing = GRID.spacing * GRID.major;
+  const minorFrac: [number, number] = [
+    cellFraction(cam.focusX, minorSpacing),
+    cellFraction(cam.focusY, minorSpacing),
+  ];
+  const majorFrac: [number, number] = [
+    cellFraction(cam.focusX, majorSpacing),
+    cellFraction(cam.focusY, majorSpacing),
+  ];
   const snapshot = {
     focus: { x: cam.focusX, y: cam.focusY },
     zoom: cam.zoom,
     resolution: { w: canvas.width, h: canvas.height },
     tailMode: TAIL_MODE[TAIL],
+    focusMinorFrac: minorFrac,
+    focusMajorFrac: majorFrac,
   };
   log.camera.silly('write', snapshot);
   camera.write({
@@ -137,6 +177,8 @@ function writeCamera() {
     zoom: cam.zoom,
     resolution: d.vec2f(canvas.width, canvas.height),
     tailMode: TAIL_MODE[TAIL],
+    focusMinorFrac: d.vec2f(minorFrac[0], minorFrac[1]),
+    focusMajorFrac: d.vec2f(majorFrac[0], majorFrac[1]),
   });
 }
 
@@ -155,10 +197,22 @@ function frame(now: number) {
   interactions.tick(dt); // advances the glide spring, marking dirty while moving
   if (dirty) {
     frameNo += 1;
+    // Diagnostic: where does world-(0,0) project? Φ maps it strictly inside the
+    // frame forever, so |originScreen| < half always (edgeGap > 0). If edgeGap
+    // ever goes ≤ 0, the origin truly left the frame (a real bug). If it's a
+    // tiny positive number, the origin is just squeezed into the edge (expected).
+    const halfW = canvas.width / 2;
+    const halfH = canvas.height / 2;
+    const originX = projectAxis(-cam.focusX, halfW, cam.zoom);
+    const originY = projectAxis(-cam.focusY, halfH, cam.zoom);
     log.frame.silly('render', {
       frame: frameNo,
       dtMs: +(dt * 1000).toFixed(2),
       cam: { focusX: cam.focusX, focusY: cam.focusY, zoom: cam.zoom },
+      focusMag: Math.hypot(cam.focusX, cam.focusY),
+      originScreen: { x: originX, y: originY },
+      originInside: { x: Math.abs(originX) < halfW, y: Math.abs(originY) < halfH },
+      edgeGapPx: { x: halfW - Math.abs(originX), y: halfH - Math.abs(originY) },
     });
     writeCamera();
     pipeline.withColorAttachment({ view: context }).draw(3);
