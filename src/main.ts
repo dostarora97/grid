@@ -302,7 +302,7 @@ const fly = attachFly({
   tune: flyTune,
   markDirty,
   onLock: (locked) => {
-    hud.classList.toggle('on', locked && flyTune.showHud);
+    hud.classList.toggle('on', locked); // crosshair shows whenever flying
     panel.refresh();
   },
 });
@@ -374,11 +374,10 @@ function frame(now: number) {
   interactions.tick(dt); // advances the glide spring, marking dirty while moving
   fly.tick(dt); // integrates velocity-steering + stroke while locked
   if (ui.locked && hudStick) {
-    // The HUD (crosshair + ring + hint) shows only when enabled; while Shift-sizing
-    // it hides regardless (the rubber-band preview is the feedback).
+    // Crosshair always shows while flying (marks the rectangle origin). The ring +
+    // hint are gated by the toggle; the ring also hides while Shift-sizing.
+    hud.classList.toggle('hud', flyTune.showHud);
     const sizing = fly.isSizing();
-    hud.classList.toggle('on', flyTune.showHud);
-    hud.classList.toggle('sizing', sizing);
     const showRing = flyTune.showHud && !sizing;
     hudStick.style.display = showRing ? '' : 'none';
     if (showRing) {

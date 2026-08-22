@@ -188,7 +188,7 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
     onChange();
   });
   syncers.push(ringSync);
-  ringLabel.append(ringInput, el('span', undefined, 'show fly HUD'));
+  ringLabel.append(ringInput, el('span', undefined, 'show ring + hint'));
   flySec.append(ringLabel);
   addSlider(
     flySec,

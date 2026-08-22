@@ -69,10 +69,10 @@ Tooling: TypeGPU Runtime Inspector MCP (not wired). Persistence: scene serializa
   center is the focus, so everything happens there: **left-click** stamps a 1×1,
   **hold Shift** freezes flying and lets the mouse size a rectangle from the center
   anchor (1:1 with the on-screen grid) — release Shift commits and resumes flying;
-  **right-click** deletes under center, **Space** hard-stops. The HUD (crosshair +
-  subtle joystick ring + hint) is **hidden by default** — a panel "show fly HUD"
-  toggle brings it back; it always hides while Shift-sizing. Unifies pan+draw into
-  one mostly-mouse loop. Normal mode (V/R, drag-draw, click-select)
+  **right-click** deletes under center, **Space** hard-stops. A center **crosshair**
+  always shows while flying (marks the rectangle origin); the **ring + hint** are
+  hidden by default behind a panel "show ring + hint" toggle (ring also hides while
+  Shift-sizing). Unifies pan+draw into one mostly-mouse loop. Normal mode (V/R, drag-draw, click-select)
   kept alongside (additive). New: `src/fly.ts` (+ `fly.test.ts` for the velocity curve),
   HUD in `main.ts`, `FLY` tunables + panel Fly section, `UiState.locked`. Notes:
   browser owns Esc-to-exit (can't prevent) + a ~1s re-lock cooldown after Esc; DOM panel

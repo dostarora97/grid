@@ -193,9 +193,14 @@ body {
   display: block;
 }
 
-/* While Shift-sizing, the steering HUD hides (the rubber-band is the feedback). */
-.fly-hud.sizing .fly-reticle {
+/* The crosshair shows whenever flying (it marks the rectangle's origin). The
+ * ring + hint are gated behind the "show ring + hint" toggle (class `hud`). */
+.fly-hint {
   display: none;
+}
+
+.fly-hud.hud .fly-hint {
+  display: block;
 }
 
 /* Center reticle: a crosshair marking the exact stamp point (= the focus). */
