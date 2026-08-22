@@ -208,6 +208,19 @@ body {
   mix-blend-mode: screen;
 }
 
+/* Joystick indicator: a subtle hollow ring, offset by the virtual stick. */
+.fly-stick {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 11px;
+  height: 11px;
+  margin: -5.5px 0 0 -5.5px;
+  border: 1.5px solid rgba(233, 237, 245, 0.55);
+  border-radius: 50%;
+  mix-blend-mode: screen;
+}
+
 /* Fly-mode hint bar (bottom-center). */
 .fly-hint {
   position: absolute;
