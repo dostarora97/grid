@@ -47,6 +47,7 @@ Tooling: TypeGPU Runtime Inspector MCP (not wired). Persistence: scene serializa
   (`flatbush`) for click-to-place/select. Rectangles foreshorten (anisotropic).
 - v3 — Links between nodes (tessellated along their length).
 - v4 — Text & LOD (MSDF/bitmap fonts; degrade far nodes gracefully).
+  - *Candidate (watch): **HTML-in-Canvas API*** (`copyElementImageToTexture`, WebGPU) to render real DOM/CSS text into a node texture we sample on the projected quad — a possible alternative to MSDF. Caveat: its interactive/accessible DOM sync uses an affine `DOMMatrix`, so it aligns only near the focus under our non-linear Φ; use render-only + our own CPU picking. Experimental (Chrome origin trial) — don't depend on it. Refs cloned to `.playground/html-in-canvas` (see `Examples/webgpu-jelly-slider`, `README.md`).
 - v5 — Scale (compute-shader culling → indirect draw) *only when profiling demands*.
 
 ## Modules (current)
