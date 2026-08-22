@@ -6,7 +6,6 @@ import { CAMERA } from './tunables';
 /** The slice of the rectangles module fly mode drives (all action at the center). */
 type RectFlyApi = {
   setGhost: (on: boolean) => void;
-  refreshGhost: () => void;
   beginCenterStroke: () => void;
   updateCenterStroke: () => void;
   commitCenterStroke: () => void;
@@ -114,7 +113,6 @@ export function attachFly(opts: {
     stickY = 0;
     if (locked) {
       holding = false;
-      rects.setGhost(true);
       canvas.style.cursor = 'none';
       log.input.debug('fly:enter');
     } else {
@@ -122,7 +120,7 @@ export function attachFly(opts: {
         rects.cancelCenterStroke();
       }
       holding = false;
-      rects.setGhost(false);
+      rects.setGhost(false); // clear any leftover targeting cell
       canvas.style.cursor = '';
       log.input.debug('fly:exit');
     }
@@ -206,9 +204,7 @@ export function attachFly(opts: {
       markDirty();
     }
     if (holding) {
-      rects.updateCenterStroke();
-    } else {
-      rects.refreshGhost();
+      rects.updateCenterStroke(); // grow the rubber-band while the button is held
     }
   }
 
