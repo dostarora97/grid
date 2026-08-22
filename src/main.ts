@@ -1,6 +1,6 @@
 import { common, d, std, tgpu } from 'typegpu';
 import { CameraStruct } from './camera';
-import { attachInteractions, type CameraState } from './interactions';
+import { attachInteractions, type CameraState, type UiState } from './interactions';
 import { log } from './logger';
 import { createSettingsPanel, type Settings } from './panel';
 import { projectAxis } from './projection';
@@ -259,10 +259,15 @@ if (typeof window !== 'undefined') {
   window.gridSettings = settings;
 }
 
+// Active tool (Select/Pan vs Draw) — gates pointer behavior; not GPU state.
+const ui: UiState = { tool: 'select' };
+
 // Settings panel — DOM chrome around the canvas (Architecture §16).
-createSettingsPanel({
+const panel = createSettingsPanel({
   settings,
   cam,
+  ui,
+  setTool: (t) => setTool(t),
   levelCount: LEVELS,
   levelSpacing: (n) => GRID.spacing * BASE ** n,
   zoomRange: [CAMERA.zoomMin, CAMERA.zoomMax],
@@ -275,7 +280,31 @@ createSettingsPanel({
   },
 });
 
-const interactions = attachInteractions(canvas, cam, markDirty);
+function setTool(tool: UiState['tool']): void {
+  ui.tool = tool;
+  canvas.style.cursor = tool === 'draw' ? 'crosshair' : '';
+  panel.refresh();
+  log.input.debug('tool', { tool });
+}
+setTool('select');
+
+// V = Select, R = Draw (ignored while typing in a panel control).
+window.addEventListener('keydown', (e) => {
+  const target = e.target;
+  if (
+    target instanceof HTMLElement &&
+    (target.tagName === 'INPUT' || target.tagName === 'SELECT')
+  ) {
+    return;
+  }
+  if (e.key === 'v' || e.key === 'V') {
+    setTool('select');
+  } else if (e.key === 'r' || e.key === 'R') {
+    setTool('draw');
+  }
+});
+
+const interactions = attachInteractions(canvas, cam, ui, markDirty);
 attachInputTelemetry(canvas);
 
 let lastTime = performance.now();

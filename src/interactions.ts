@@ -6,14 +6,19 @@ import { CAMERA } from './tunables';
 /** CPU-side camera state — the authoritative focus + zoom (Architecture §7.1, §8.3). */
 export type CameraState = { focusX: number; focusY: number; zoom: number };
 
+/** Which tool is active — gates whether drags pan/select vs. draw rectangles. */
+export type UiState = { tool: 'select' | 'draw' };
+
 /**
- * Wire pan (grab-and-pull), zoom-about-cursor, and focus-glide to the canvas.
- * Every handler changes only `cam` (never the data) and calls `markDirty`; the
+ * Wire pan (uniform drag), zoom-about-cursor, and focus-glide to the canvas.
+ * Pan and glide act only in the Select tool (`ui.tool === 'select'`); zoom works
+ * in any tool. Every handler changes only `cam` and calls `markDirty`; the
  * returned `tick` advances the interruptible glide spring each frame (§7.6).
  */
 export function attachInteractions(
   canvas: HTMLCanvasElement,
   cam: CameraState,
+  ui: UiState,
   markDirty: () => void,
 ): { tick: (dt: number) => void } {
   const springX = new Spring(cam.focusX);
@@ -55,6 +60,9 @@ export function attachInteractions(
   let lastOx = 0;
   let lastOy = 0;
   canvas.addEventListener('pointerdown', (e) => {
+    if (ui.tool !== 'select') {
+      return; // Draw tool handles its own pointer events (see rectangles module).
+    }
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {
@@ -133,6 +141,9 @@ export function attachInteractions(
 
   // --- Focus glide: spring the focus to the double-clicked world point (§7.6). ---
   canvas.addEventListener('dblclick', (e) => {
+    if (ui.tool !== 'select') {
+      return; // In Draw mode a click makes a 1×1 cell; glide would clash.
+    }
     [targetX, targetY] = worldAt(e.clientX, e.clientY);
     gliding = true;
     log.glide.debug('glide:start', {

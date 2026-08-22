@@ -1,4 +1,4 @@
-import type { CameraState } from './interactions';
+import type { CameraState, UiState } from './interactions';
 
 /** Live render settings mutated by the panel and uploaded in the camera uniform. */
 export type Settings = {
@@ -20,6 +20,9 @@ export type Settings = {
 type PanelOptions = {
   settings: Settings;
   cam: CameraState;
+  ui: UiState;
+  /** Switch the active tool (updates state, cursor, and panel highlight). */
+  setTool: (tool: UiState['tool']) => void;
   levelCount: number;
   /** World spacing of level n (for labels). */
   levelSpacing: (n: number) => number;
@@ -60,8 +63,9 @@ function formatSpacing(v: number): string {
  * All controls read/write the shared `settings`/`cam` objects and call
  * `onChange`; `syncers` re-read state into the controls (used on open / reset).
  */
-export function createSettingsPanel(opts: PanelOptions): void {
-  const { settings, cam, levelCount, levelSpacing, zoomRange, onChange, resetView } = opts;
+export function createSettingsPanel(opts: PanelOptions): { refresh: () => void } {
+  const { settings, cam, ui, setTool, levelCount, levelSpacing, zoomRange, onChange, resetView } =
+    opts;
   const defaults = structuredClone(settings);
   const syncers: (() => void)[] = [];
   const refresh = () => {
@@ -125,6 +129,20 @@ export function createSettingsPanel(opts: PanelOptions): void {
     row.append(el('span', 'sp-slabel', label), input, val);
     parent.append(row);
   };
+
+  // --- Tool ---
+  const toolSec = section('Tool');
+  const toolRow = el('div', 'sp-row');
+  const toolLabels: Record<UiState['tool'], string> = { select: 'Select (V)', draw: 'Draw (R)' };
+  for (const t of ['select', 'draw'] as const) {
+    const btn = el('button', 'sp-btn', toolLabels[t]);
+    btn.type = 'button';
+    const sync = () => btn.classList.toggle('on', ui.tool === t);
+    btn.addEventListener('click', () => setTool(t));
+    syncers.push(sync);
+    toolRow.append(btn);
+  }
+  toolSec.append(toolRow);
 
   // --- Grid levels ---
   const levelsSec = section('Grid levels (world spacing)');
@@ -311,4 +329,5 @@ export function createSettingsPanel(opts: PanelOptions): void {
 
   document.body.append(container);
   refresh();
+  return { refresh };
 }

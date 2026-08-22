@@ -108,7 +108,8 @@ body {
   cursor: pointer;
 }
 
-.sp-chip.on {
+.sp-chip.on,
+.sp-btn.on {
   color: #fff;
   background: #3b6ea5;
   border-color: #3b6ea5;
