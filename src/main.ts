@@ -1,5 +1,6 @@
 import { common, d, std, tgpu } from 'typegpu';
 import { CameraStruct } from './camera';
+import { attachInteractions, type CameraState } from './interactions';
 import { CAMERA, COLORS, GRID } from './tunables';
 
 const canvasEl = document.querySelector<HTMLCanvasElement>('#canvas');
@@ -12,7 +13,7 @@ const root = await tgpu.init();
 const context = root.configureContext({ canvas, alphaMode: 'premultiplied' });
 
 // CPU-side camera state — the whole per-frame upload (Architecture §7.1, §8.3).
-const cam = { focusX: 0, focusY: 0, zoom: CAMERA.defaultZoom };
+const cam: CameraState = { focusX: 0, focusY: 0, zoom: CAMERA.defaultZoom };
 
 const camera = root.createUniform(CameraStruct, {
   focus: d.vec2f(0, 0),
@@ -101,7 +102,17 @@ function writeCamera() {
   });
 }
 
-function frame() {
+// Pan / zoom / focus-glide — all mutate `cam` and mark the frame dirty (§7.6).
+const markDirty = () => {
+  dirty = true;
+};
+const interactions = attachInteractions(canvas, cam, markDirty);
+
+let lastTime = performance.now();
+function frame(now: number) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05); // clamp long stalls
+  lastTime = now;
+  interactions.tick(dt); // advances the glide spring, marking dirty while moving
   if (dirty) {
     writeCamera();
     pipeline.withColorAttachment({ view: context }).draw(3);
