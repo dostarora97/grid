@@ -5,7 +5,7 @@ import { log } from './logger';
 import { createSettingsPanel, type Settings } from './panel';
 import { projectAxis } from './projection';
 import { attachInputTelemetry } from './telemetry';
-import { ADAPTIVE, CAMERA, COLORS, FADE, GRID, TAIL, TAIL_MODE } from './tunables';
+import { ADAPTIVE, CAMERA, COLORS, FADE, GRID, TAIL, TAIL_MODE, TINT } from './tunables';
 
 const canvasEl = document.querySelector<HTMLCanvasElement>('#canvas');
 if (!canvasEl) {
@@ -50,6 +50,8 @@ const settings: Settings = {
   lineHalfPx: ADAPTIVE.halfPx,
   tailMode: TAIL_MODE[TAIL],
   axesOn: true,
+  tintStrength: TINT.strength,
+  tintScale: TINT.scale,
 };
 
 const camera = root.createUniform(CameraStruct, {
@@ -63,11 +65,19 @@ const camera = root.createUniform(CameraStruct, {
   lineAlpha: settings.lineAlpha,
   lineHalfPx: settings.lineHalfPx,
   axesOn: 1,
+  tintStrength: settings.tintStrength,
+  tintScale: settings.tintScale,
 });
 
 // Colors captured by the shader as GPU constants.
 const BG = d.vec3f(COLORS.bgR, COLORS.bgG, COLORS.bgB);
 const LINE = d.vec3f(1, 1, 1);
+
+// Direction-tint opponent colors (a color compass to infinity; §6.4).
+const DIR_UP = d.vec3f(TINT.up[0], TINT.up[1], TINT.up[2]);
+const DIR_DOWN = d.vec3f(TINT.down[0], TINT.down[1], TINT.down[2]);
+const DIR_LEFT = d.vec3f(TINT.left[0], TINT.left[1], TINT.left[2]);
+const DIR_RIGHT = d.vec3f(TINT.right[0], TINT.right[1], TINT.right[2]);
 
 /**
  * Anti-aliased coverage of a gridline given the per-pixel distance to the
@@ -158,7 +168,28 @@ const pipeline = root.createRenderPipeline({
       lineCoverage(axisD.y, GRID.axisHalfPx),
     );
 
-    const gridColor = std.mix(BG, LINE, std.clamp(grid, d.f32(0), d.f32(1)));
+    // Directional opponent-color tint painted onto the WORLD (not the screen):
+    // color is a function of the world coordinate under this pixel, so it pans,
+    // compresses toward the edges, and expands at the focus exactly like the
+    // grid — one fabric. The color coordinate saturates with distance from the
+    // world origin: neutral at the origin, full at ±∞ (the edges). +x=blue,
+    // −x=yellow, +y=red, −y=green (§6.4).
+    // Rational squash (overflow-safe): neutral at the origin, saturating to ±1
+    // at ±∞. We avoid tanh here because near the edges world/scale reaches ~1e6,
+    // and GPU tanh (via e^x) overflows f32 to NaN there — which showed up as
+    // colored bands in the outermost pixels. p/(|p|+1) never overflows.
+    const tx = world.x / c.tintScale;
+    const ty = world.y / c.tintScale;
+    const cx = tx / (std.abs(tx) + 1);
+    const cy = ty / (std.abs(ty) + 1);
+    const tint =
+      DIR_UP * std.max(cy, d.f32(0)) +
+      DIR_DOWN * std.max(-cy, d.f32(0)) +
+      DIR_LEFT * std.max(-cx, d.f32(0)) +
+      DIR_RIGHT * std.max(cx, d.f32(0));
+    const tintedBg = BG + tint * c.tintStrength;
+
+    const gridColor = std.mix(tintedBg, LINE, std.clamp(grid, d.f32(0), d.f32(1)));
     const out = std.mix(gridColor, LINE, axis * COLORS.axisAlpha * c.axesOn);
     return d.vec4f(out, 1);
   },
@@ -208,6 +239,8 @@ function writeCamera() {
     lineAlpha: settings.lineAlpha,
     lineHalfPx: settings.lineHalfPx,
     axesOn: settings.axesOn ? 1 : 0,
+    tintStrength: settings.tintStrength,
+    tintScale: settings.tintScale,
   });
 }
 

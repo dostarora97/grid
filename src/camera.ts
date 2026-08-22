@@ -32,4 +32,12 @@ export const CameraStruct = d.struct({
   lineHalfPx: d.f32,
   /** Origin-axes toggle: 1 = shown, 0 = hidden. */
   axesOn: d.f32,
+  /**
+   * Directional opponent-color tint strength (0 = off) and world-space scale of
+   * the neutral halo around the origin. Colors the plane by world position — a
+   * "color compass to infinity" (§6.4): neutral at the origin, saturating toward
+   * each edge. Larger `tintScale` = broader, smoother gradient (softer blocks).
+   */
+  tintStrength: d.f32,
+  tintScale: d.f32,
 });

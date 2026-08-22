@@ -11,6 +11,10 @@ export type Settings = {
   /** Φ tail: 0 = rational, 1 = tanh, 2 = atan. */
   tailMode: number;
   axesOn: boolean;
+  /** Directional opponent-color tint strength (0 = off). */
+  tintStrength: number;
+  /** World-space scale of the neutral halo (larger = smoother, broader). */
+  tintScale: number;
 };
 
 type PanelOptions = {
@@ -254,6 +258,31 @@ export function createSettingsPanel(opts: PanelOptions): void {
   axesLabel.append(axesInput, el('span', undefined, 'show axes'));
   axesSec.append(axesLabel);
 
+  // --- Colour ---
+  const colorSec = section('Colour');
+  addSlider(
+    colorSec,
+    'dir tint',
+    0,
+    0.8,
+    0.02,
+    () => settings.tintStrength,
+    (v) => {
+      settings.tintStrength = v;
+    },
+  );
+  addSlider(
+    colorSec,
+    'tint scale',
+    300,
+    15000,
+    100,
+    () => settings.tintScale,
+    (v) => {
+      settings.tintScale = v;
+    },
+  );
+
   // --- Actions ---
   const actions = el('div', 'sp-row sp-actions');
   const resetSettingsBtn = el('button', 'sp-btn', 'Reset settings');
@@ -266,6 +295,8 @@ export function createSettingsPanel(opts: PanelOptions): void {
     settings.lineHalfPx = defaults.lineHalfPx;
     settings.tailMode = defaults.tailMode;
     settings.axesOn = defaults.axesOn;
+    settings.tintStrength = defaults.tintStrength;
+    settings.tintScale = defaults.tintScale;
     refresh();
     onChange();
   });

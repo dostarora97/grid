@@ -49,6 +49,23 @@ export const ADAPTIVE = {
   alpha: 0.06,
 } as const;
 
+/**
+ * Directional opponent-color tint (CIELAB-style "compass to infinity", §6.4):
+ * the plane is tinted by screen direction from the focus — neutral at the
+ * center, saturating toward each edge. Image-1 assignment: up = red (+a),
+ * down = green (−a), left = yellow (+b), right = blue (−b).
+ */
+export const TINT = {
+  /** Overall tint strength; 0 = off. */
+  strength: 0.35,
+  /** World-space radius of the neutral halo around the origin (tanh scale). */
+  scale: 1500,
+  up: [0.95, 0.2, 0.2],
+  down: [0.2, 0.8, 0.3],
+  left: [0.95, 0.85, 0.15],
+  right: [0.25, 0.4, 1.0],
+} as const;
+
 /** Colors: background rgb (sRGB 0..1) + per-class line opacities over the background. */
 export const COLORS = {
   // #0E1116
