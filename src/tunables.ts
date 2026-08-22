@@ -29,6 +29,26 @@ export const FADE = {
   endPx: 9,
 } as const;
 
+/**
+ * Adaptive multi-level grid (option B / A+B). We render `levels` nested grids at
+ * world spacings G·base^0 … G·base^(levels-1), each anti-aliased and faded by
+ * the same derivative rule as A. Near the center several levels overlap and the
+ * additive coincidence recreates minor/major/super-major for free (a line shared
+ * by a coarser level gets brighter); toward the edge fine levels fade out while
+ * coarser ones stay crisp — so the lattice reaches to within a fraction of a
+ * pixel of the edge with no mush and no empty margin.
+ */
+export const ADAPTIVE = {
+  /** Number of nested levels (covers G … G·base^(levels-1) world spacing). */
+  levels: 10,
+  /** Ratio between adjacent levels — reuses the major interval. */
+  base: GRID.major,
+  /** Line half-width in device px, shared by all levels. */
+  halfPx: 0.5,
+  /** Per-level opacity; additive nesting builds the visual hierarchy. */
+  alpha: 0.06,
+} as const;
+
 /** Colors: background rgb (sRGB 0..1) + per-class line opacities over the background. */
 export const COLORS = {
   // #0E1116

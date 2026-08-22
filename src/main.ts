@@ -4,7 +4,7 @@ import { attachInteractions, type CameraState } from './interactions';
 import { log } from './logger';
 import { projectAxis } from './projection';
 import { attachInputTelemetry } from './telemetry';
-import { CAMERA, COLORS, FADE, GRID, TAIL, TAIL_MODE } from './tunables';
+import { ADAPTIVE, CAMERA, COLORS, FADE, GRID, TAIL, TAIL_MODE } from './tunables';
 
 const canvasEl = document.querySelector<HTMLCanvasElement>('#canvas');
 if (!canvasEl) {
@@ -42,13 +42,18 @@ const tune: { fadeStartPx: number; fadeEndPx: number } = {
   fadeEndPx: FADE.endPx,
 };
 
+// Adaptive-grid constants (inlined into the shader as literals).
+const LEVELS = ADAPTIVE.levels;
+const BASE = ADAPTIVE.base;
+const LEVEL_HALF_PX = ADAPTIVE.halfPx;
+const LEVEL_ALPHA = ADAPTIVE.alpha;
+
 const camera = root.createUniform(CameraStruct, {
   focus: d.vec2f(0, 0),
   zoom: cam.zoom,
   resolution: d.vec2f(1, 1),
   tailMode: TAIL_MODE[TAIL],
-  focusMinorFrac: d.vec2f(0, 0),
-  focusMajorFrac: d.vec2f(0, 0),
+  focusLevelFrac: Array.from({ length: LEVELS }, () => d.vec4f(0, 0, 0, 0)),
   fadeStartPx: tune.fadeStartPx,
   fadeEndPx: tune.fadeEndPx,
 });
@@ -56,10 +61,6 @@ const camera = root.createUniform(CameraStruct, {
 // Colors captured by the shader as GPU constants.
 const BG = d.vec3f(COLORS.bgR, COLORS.bgG, COLORS.bgB);
 const LINE = d.vec3f(1, 1, 1);
-
-// Precomputed inverse cell spacings (float constants → f32 in the shader).
-const INV_MINOR = 1 / GRID.spacing;
-const INV_MAJOR = 1 / (GRID.spacing * GRID.major);
 
 /**
  * Anti-aliased coverage of a gridline given the per-pixel distance to the
@@ -116,50 +117,42 @@ const pipeline = root.createRenderPipeline({
     // small); far from the origin the axes sit in the edge wash anyway.
     const world = c.focus + delta;
 
-    // Analytic gridlines via screen-space derivatives (Architecture §7.5, §8.3):
-    // fract of (relative cell offset + focus's fractional cell offset).
-    const minorCell = delta * INV_MINOR + c.focusMinorFrac;
-    const majorCell = delta * INV_MAJOR + c.focusMajorFrac;
+    // World units per pixel, per axis (from the relative delta → precision-safe).
+    const wpp = std.fwidth(delta);
 
-    const minorFw = std.fwidth(minorCell);
-    const majorFw = std.fwidth(majorCell);
-    const minorD = std.abs(std.fract(minorCell - 0.5) - 0.5) / minorFw;
-    const majorD = std.abs(std.fract(majorCell - 0.5) - 0.5) / majorFw;
+    // Adaptive multi-level grid (option B / A+B): sum LEVELS nested grids at world
+    // spacing G·BASE^n, each fract-based and fwidth-anti-aliased, faded out where
+    // its on-screen cell spacing (1/cpp) drops below fadeStartPx. Additive nesting
+    // makes shared (coarser) lines brighter → minor/major/super-major for free;
+    // coarse levels stay crisp to the edge where fine ones have faded.
+    let grid = d.f32(0);
+    for (let n = 0; n < LEVELS; n++) {
+      const spacing = GRID.spacing * std.pow(d.f32(BASE), d.f32(n));
+      const frac = c.focusLevelFrac[n].xy; // precise fractional focus offset at this level
+      const cpp = wpp / spacing; // cells per pixel, per axis
+      const fieldX = delta.x / spacing + frac.x;
+      const fieldY = delta.y / spacing + frac.y;
+      const distX = std.abs(std.fract(fieldX - 0.5) - 0.5) / cpp.x;
+      const distY = std.abs(std.fract(fieldY - 0.5) - 0.5) / cpp.y;
+      const fadeX = std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / cpp.x);
+      const fadeY = std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / cpp.y);
+      const lineCov = std.max(
+        lineCoverage(distX, LEVEL_HALF_PX) * fadeX,
+        lineCoverage(distY, LEVEL_HALF_PX) * fadeY,
+      );
+      grid = grid + lineCov * LEVEL_ALPHA;
+    }
+
+    // Origin axes on top (absolute world; precise exactly when the origin is in view).
     const axisD = std.abs(world) / std.fwidth(world);
-
-    // Derivative-based fade (option A): a family's on-screen cell spacing is
-    // 1/fwidth(cell) device px. Fade it out below fadeStartPx (bunching toward
-    // the edge), fully show it above fadeEndPx — so the dense edge dissolves to
-    // a clean recession instead of gray mush. Majors (5× spacing) persist deeper.
-    const minorFade = d.vec2f(
-      std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / minorFw.x),
-      std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / minorFw.y),
-    );
-    const majorFade = d.vec2f(
-      std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / majorFw.x),
-      std.smoothstep(c.fadeStartPx, c.fadeEndPx, d.f32(1) / majorFw.y),
-    );
-
-    // Because the map is separable, screen-vertical lines come only from the
-    // x-coordinate and horizontal lines only from y — combine with max.
-    const minor = std.max(
-      lineCoverage(minorD.x, GRID.minorHalfPx) * minorFade.x,
-      lineCoverage(minorD.y, GRID.minorHalfPx) * minorFade.y,
-    );
-    const major = std.max(
-      lineCoverage(majorD.x, GRID.majorHalfPx) * majorFade.x,
-      lineCoverage(majorD.y, GRID.majorHalfPx) * majorFade.y,
-    );
     const axis = std.max(
       lineCoverage(axisD.x, GRID.axisHalfPx),
       lineCoverage(axisD.y, GRID.axisHalfPx),
     );
 
-    // Composite back-to-front: minor, then major over it, then the origin axes.
-    const c1 = std.mix(BG, LINE, minor * COLORS.minorAlpha);
-    const c2 = std.mix(c1, LINE, major * COLORS.majorAlpha);
-    const c3 = std.mix(c2, LINE, axis * COLORS.axisAlpha);
-    return d.vec4f(c3, 1);
+    const gridColor = std.mix(BG, LINE, std.clamp(grid, d.f32(0), d.f32(1)));
+    const out = std.mix(gridColor, LINE, axis * COLORS.axisAlpha);
+    return d.vec4f(out, 1);
   },
 });
 
@@ -176,23 +169,19 @@ function cellFraction(v: number, spacing: number): number {
 }
 
 function writeCamera() {
-  const minorSpacing = GRID.spacing;
-  const majorSpacing = GRID.spacing * GRID.major;
-  const minorFrac: [number, number] = [
-    cellFraction(cam.focusX, minorSpacing),
-    cellFraction(cam.focusY, minorSpacing),
-  ];
-  const majorFrac: [number, number] = [
-    cellFraction(cam.focusX, majorSpacing),
-    cellFraction(cam.focusY, majorSpacing),
-  ];
+  // Per-level fractional focus offset (f64) — precise phase for every level.
+  const levelFrac: d.v4f[] = [];
+  for (let n = 0; n < LEVELS; n++) {
+    const spacing = GRID.spacing * BASE ** n;
+    levelFrac.push(
+      d.vec4f(cellFraction(cam.focusX, spacing), cellFraction(cam.focusY, spacing), 0, 0),
+    );
+  }
   const snapshot = {
     focus: { x: cam.focusX, y: cam.focusY },
     zoom: cam.zoom,
     resolution: { w: canvas.width, h: canvas.height },
     tailMode: TAIL_MODE[TAIL],
-    focusMinorFrac: minorFrac,
-    focusMajorFrac: majorFrac,
     fade: { startPx: tune.fadeStartPx, endPx: tune.fadeEndPx },
   };
   log.camera.silly('write', snapshot);
@@ -201,8 +190,7 @@ function writeCamera() {
     zoom: cam.zoom,
     resolution: d.vec2f(canvas.width, canvas.height),
     tailMode: TAIL_MODE[TAIL],
-    focusMinorFrac: d.vec2f(minorFrac[0], minorFrac[1]),
-    focusMajorFrac: d.vec2f(majorFrac[0], majorFrac[1]),
+    focusLevelFrac: levelFrac,
     fadeStartPx: tune.fadeStartPx,
     fadeEndPx: tune.fadeEndPx,
   });

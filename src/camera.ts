@@ -1,4 +1,5 @@
 import { d } from 'typegpu';
+import { ADAPTIVE } from './tunables';
 
 /**
  * The camera uniform — the entire per-frame CPU→GPU upload (Architecture §7.1).
@@ -17,17 +18,15 @@ export const CameraStruct = d.struct({
   /** Φ tail selector: 0 = rational, 1 = tanh, 2 = atan (Architecture §7.7). */
   tailMode: d.f32,
   /**
-   * The focus's fractional offset within a minor / major cell, computed on the
-   * CPU in f64. The grid phase is measured *relative to the focus* using these,
-   * so the shader's `fract` only ever sees small numbers — this is what keeps
-   * the lattice crisp arbitrarily far from the origin (translation invariance;
-   * Architecture §8.3). Only the fractional part matters to `fract`, so these
-   * carry all the position information the grid needs, with none of the
-   * precision-destroying magnitude.
+   * The focus's fractional offset within each adaptive level's cell (in `.xy`),
+   * computed on the CPU in f64. The grid phase for every level is measured
+   * relative to the focus using these, so the shader's `fract` only ever sees
+   * small numbers — keeping the lattice crisp arbitrarily far from the origin
+   * (translation invariance; Architecture §8.3). `vec4f` (not `vec2f`) to satisfy
+   * the uniform array's 16-byte stride; only `.xy` is used.
    */
-  focusMinorFrac: d.vec2f,
-  focusMajorFrac: d.vec2f,
-  /** Derivative-based edge-fade thresholds in device px (Architecture §7.7, option A). */
+  focusLevelFrac: d.arrayOf(d.vec4f, ADAPTIVE.levels),
+  /** Derivative-based edge-fade thresholds in device px (Architecture §7.7). */
   fadeStartPx: d.f32,
   fadeEndPx: d.f32,
 });

@@ -23,3 +23,6 @@ dist-ssr
 
 # Agent scratch space (not part of the project)
 .playground/
+
+# Stray root-level screenshots (keep out of git)
+/*.png
