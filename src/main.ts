@@ -48,9 +48,15 @@ const pipeline = root.createRenderPipeline({
     // Flip Y so world-Y increases upward (math convention).
     const off = d.vec2f((uv.x - 0.5) * c.resolution.x, (0.5 - uv.y) * c.resolution.y);
 
-    // STATIC (unprojected) mapping — plain affine pan/zoom. Step 3 replaces this
-    // single line with the separable inverse projection Φ⁻¹ (Architecture §7.3).
-    const world = c.focus + off / c.zoom;
+    // Separable inverse projection Φ⁻¹ (Architecture §7.3): recover the world
+    // point under this pixel, per-axis. With half-extents (Wx, Wy) and NDC-like
+    // coords u = ox/Wx, v = oy/Wy (each in (−1,1), clamped off the edge
+    // singularity):  dx = u·Wx / (z·(1−|u|)),  dy = v·Wy / (z·(1−|v|)).
+    // Near the edge the denominator → 0 so world → ∞ — this is correct: gridlines
+    // bunch infinitely toward the frame edge (the signature of infinity).
+    const half = c.resolution * 0.5;
+    const ndc = std.clamp(off / half, d.vec2f(-0.999999, -0.999999), d.vec2f(0.999999, 0.999999));
+    const world = c.focus + (ndc * half) / (c.zoom * (d.vec2f(1, 1) - std.abs(ndc)));
 
     // Analytic gridlines via screen-space derivatives (Architecture §7.5):
     // distance to the nearest line, measured in pixels. Take fwidth of the
