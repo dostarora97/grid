@@ -193,6 +193,11 @@ body {
   display: block;
 }
 
+/* While Shift-sizing, the steering HUD hides (the rubber-band is the feedback). */
+.fly-hud.sizing .fly-reticle {
+  display: none;
+}
+
 /* Center reticle: a crosshair marking the exact stamp point (= the focus). */
 .fly-reticle {
   position: absolute;

@@ -372,9 +372,17 @@ function frame(now: number) {
   interactions.tick(dt); // advances the glide spring, marking dirty while moving
   fly.tick(dt); // integrates velocity-steering + stroke while locked
   if (ui.locked && hudStick) {
-    // Reflect the virtual joystick offset on the HUD (screen Y-down for CSS).
-    const [sx, sy] = fly.stick();
-    hudStick.style.transform = `translate(-50%, -50%) translate(${sx}px, ${-sy}px)`;
+    // While Shift-sizing, hide the steering HUD (crosshair + ring); the rubber-band
+    // preview is the feedback. Otherwise show the ring (unless toggled off) at the
+    // stick offset.
+    const sizing = fly.isSizing();
+    hud.classList.toggle('sizing', sizing);
+    const showRing = !sizing && flyTune.showStick;
+    hudStick.style.display = showRing ? '' : 'none';
+    if (showRing) {
+      const [sx, sy] = fly.stick();
+      hudStick.style.transform = `translate(-50%, -50%) translate(${sx}px, ${-sy}px)`;
+    }
   }
   if (dirty) {
     frameNo += 1;

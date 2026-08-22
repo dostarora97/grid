@@ -22,6 +22,7 @@ export type FlyTune = {
   maxSpeedPx: number;
   curveExp: number;
   unadjustedMovement: boolean;
+  showStick: boolean;
 };
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
@@ -71,6 +72,7 @@ export function attachFly(opts: {
   enter: () => void;
   exit: () => void;
   stick: () => [number, number];
+  isSizing: () => boolean;
 } {
   const { canvas, cam, ui, rects, tune, markDirty, onLock } = opts;
 
@@ -243,5 +245,5 @@ export function attachFly(opts: {
     }
   }
 
-  return { tick, toggle, enter, exit, stick: () => [stickX, stickY] };
+  return { tick, toggle, enter, exit, stick: () => [stickX, stickY], isSizing: () => sizing };
 }
