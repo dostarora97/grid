@@ -50,6 +50,45 @@ Tooling: TypeGPU Runtime Inspector MCP (not wired). Persistence: scene serializa
   - *Candidate (watch): **HTML-in-Canvas API*** (`copyElementImageToTexture`, WebGPU) to render real DOM/CSS text into a node texture we sample on the projected quad — a possible alternative to MSDF. Caveat: its interactive/accessible DOM sync uses an affine `DOMMatrix`, so it aligns only near the focus under our non-linear Φ; use render-only + our own CPU picking. Experimental (Chrome origin trial) — don't depend on it. Refs cloned to `.playground/html-in-canvas` (see `Examples/webgpu-jelly-slider`, `README.md`).
 - v5 — Scale (compute-shader culling → indirect draw) *only when profiling demands*.
 
+## v2 design — rectangles (decided)
+Conceptual model: **a rectangle is a contiguous block of grid cells, given a fill** —
+an annotation on the same lattice, not a new coordinate system. Geometry is **integer
+cell coordinates**; it pans/zooms/compresses with the grid *for free* (world-anchored,
+projected by Φ); no-overlap is an integer AABB test. Stored as a discrete object
+`{id, cellMin, cellMax, …}`.
+
+- **Interaction model — Option A (tool modes)** for now: a **Select/Pan** tool and a
+  **Draw** tool, toggled by keys (`V`/`R`) and/or panel buttons; default = Select.
+  In Draw mode, drag draws; in Select mode, drag pans and click selects. *(Deferred:
+  Option B modifier — hold a key to draw; and the hybrid — tool modes + `Space`-drag
+  to pan from any tool. Add later.)*
+- **v2 scope: create + delete only.** No dragging/repositioning, no resizing (deferred).
+- **Snap:** fixed base `G`. Cell `(i,j)` = `floor(world/G)`; covers world `[iG,(i+1)G]²`.
+  Smallest rectangle = **1×1 cell**. *(Adaptive/zoom-aware snap deferred.)*
+- **Create (rubber-band):** press = start cell (snapped); drag = live snapped preview
+  from start→current cell (inclusive block); release = commit. **Empty click (no drag)
+  = a 1×1 cell.** Preview shows **red/invalid** when it would overlap.
+- **No-overlap:** forbid — an overlapping preview **won't commit**. **Touching edges is
+  fine** (adjacent cells OK); only **shared interior cells** conflict. *(Deferred
+  alternative: auto-clamp/shrink the new rect to the free space instead of forbidding.)*
+- **Delete:** select a rectangle, then `Delete`; also right-click → delete.
+- **Select:** click a rectangle → select (single-select); click empty → deselect.
+  Selection's only job in v2 is to be the delete target (no move/resize). *(Multi-select
+  deferred.)*
+- **Appearance:** **translucent fill + a crisp outline**, with the direction-tint (and
+  grid) **showing through** — reads as "this region of the grid, marked." *(Per-rectangle
+  color / picker deferred; v2 uses one default fill.)*
+- **Data + rendering (proposed, confirm):** rectangles as integer cell-AABBs in a JS
+  array + a GPU **storage buffer** synced only on create/delete (not per frame).
+  Rendered as **instanced quads** in a second, alpha-blended pass, corners projected via
+  Φ (use **camera-relative** projection for precision far from origin). CPU picking =
+  linear scan in cell space (add `flatbush` when counts grow). *(Alternative: paint
+  rects inside the grid fragment pass via a cell test — simpler for tiny N, doesn't
+  scale.)*
+- **Deferred (v2+):** move/reposition, resize, per-rect color, multi-select,
+  auto-clamp-on-overlap, persistence (rects are in-memory, lost on reload), dedicated
+  toolbar UI, Option-B/hybrid input.
+
 ## Modules (current)
 `main.ts` (root/context/pipeline/loop/resize) · `camera.ts` (uniform schema) ·
 `tunables.ts` (GRID/COLORS/CAMERA/TAIL/FADE/ADAPTIVE/TINT) · `projection.ts` (Φ/Φ⁻¹ +
