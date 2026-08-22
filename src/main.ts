@@ -1,12 +1,13 @@
 import { common, d, std, tgpu } from 'typegpu';
 import { CameraStruct } from './camera';
 import { attachInteractions, type CameraState, type UiState } from './interactions';
+import { attachFly, type FlyTune } from './fly';
 import { log } from './logger';
 import { createSettingsPanel, type Settings } from './panel';
 import { projectAxis } from './projection';
 import { createRectangles } from './rectangles';
 import { attachInputTelemetry } from './telemetry';
-import { ADAPTIVE, CAMERA, COLORS, FADE, GRID, TAIL, TAIL_MODE, TINT } from './tunables';
+import { ADAPTIVE, CAMERA, COLORS, FADE, FLY, GRID, TAIL, TAIL_MODE, TINT } from './tunables';
 
 const canvasEl = document.querySelector<HTMLCanvasElement>('#canvas');
 if (!canvasEl) {
@@ -262,8 +263,8 @@ if (typeof window !== 'undefined') {
   window.gridSettings = settings;
 }
 
-// Active tool (Select/Pan vs Draw) — gates pointer behavior; not GPU state.
-const ui: UiState = { tool: 'select' };
+// Active tool (Select/Pan vs Draw) + fly-lock state — gates pointer behavior.
+const ui: UiState = { tool: 'select', locked: false };
 
 // Rectangles on the grid — instanced quads projected by the forward Φ; owns its
 // own Draw-tool pointer handling (rubber-band create). Architecture §8.2, §9.
@@ -277,12 +278,51 @@ const rectangles = createRectangles({
   markDirty,
 });
 
+// --- Fly mode (experiment): velocity steering under pointer lock. -------------
+// Live tunables (mutable copy so the panel/console can tune the feel).
+const flyTune: FlyTune = { ...FLY };
+
+// HUD: a center reticle + a stick indicator (the real cursor is hidden while
+// locked, so this is the only feedback for "where is the joystick / center").
+const hud = document.createElement('div');
+hud.className = 'fly-hud';
+hud.innerHTML =
+  '<div class="fly-reticle"></div><div class="fly-stick"></div>' +
+  '<div class="fly-hint">fly — move to steer · click to stamp · hold to grow · right-click delete · Space stop · F/Esc exit</div>';
+document.body.append(hud);
+const hudStick = hud.querySelector<HTMLElement>('.fly-stick');
+
+const fly = attachFly({
+  canvas,
+  cam,
+  ui,
+  rects: rectangles,
+  tune: flyTune,
+  markDirty,
+  onLock: (locked) => {
+    hud.classList.toggle('on', locked);
+    panel.refresh();
+  },
+});
+
+declare global {
+  interface Window {
+    /** Live fly-mode tunables, exposed for console tweaking. */
+    gridFly: FlyTune;
+  }
+}
+if (typeof window !== 'undefined') {
+  window.gridFly = flyTune;
+}
+
 // Settings panel — DOM chrome around the canvas (Architecture §16).
 const panel = createSettingsPanel({
   settings,
   cam,
   ui,
   setTool: (t) => setTool(t),
+  flyTune,
+  enterFly: () => fly.enter(),
   levelCount: LEVELS,
   levelSpacing: (n) => GRID.spacing * BASE ** n,
   zoomRange: [CAMERA.zoomMin, CAMERA.zoomMax],
@@ -316,6 +356,8 @@ window.addEventListener('keydown', (e) => {
     setTool('select');
   } else if (e.key === 'r' || e.key === 'R') {
     setTool('draw');
+  } else if (e.key === 'f' || e.key === 'F') {
+    fly.toggle(); // enter/exit pointer-lock fly mode (this keypress is the gesture)
   }
 });
 
@@ -328,6 +370,12 @@ function frame(now: number) {
   const dt = Math.min((now - lastTime) / 1000, 0.05); // clamp long stalls
   lastTime = now;
   interactions.tick(dt); // advances the glide spring, marking dirty while moving
+  fly.tick(dt); // integrates velocity-steering + stroke/ghost while locked
+  if (ui.locked && hudStick) {
+    // Reflect the virtual joystick offset on the HUD (screen Y-down for CSS).
+    const [sx, sy] = fly.stick();
+    hudStick.style.transform = `translate(-50%, -50%) translate(${sx}px, ${-sy}px)`;
+  }
   if (dirty) {
     frameNo += 1;
     // Diagnostic: where does world-(0,0) project? Φ maps it strictly inside the

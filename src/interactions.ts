@@ -7,8 +7,10 @@ import { CAMERA } from './tunables';
 /** CPU-side camera state — the authoritative focus + zoom (Architecture §7.1, §8.3). */
 export type CameraState = { focusX: number; focusY: number; zoom: number };
 
-/** Which tool is active — gates whether drags pan/select vs. draw rectangles. */
-export type UiState = { tool: 'select' | 'draw' };
+/** Which tool is active — gates whether drags pan/select vs. draw rectangles.
+ * `locked` = fly mode (pointer-locked velocity steering) is active; normal-mode
+ * pan/zoom/glide and the rectangles pointer handlers stand down while it's true. */
+export type UiState = { tool: 'select' | 'draw'; locked: boolean };
 
 /**
  * Wire pan (uniform drag), zoom-about-cursor, and focus-glide to the canvas.
@@ -52,8 +54,8 @@ export function attachInteractions(
   let lastOx = 0;
   let lastOy = 0;
   canvas.addEventListener('pointerdown', (e) => {
-    if (ui.tool !== 'select' || e.button !== 0) {
-      return; // Draw tool handles its own pointer events; non-left buttons don't pan.
+    if (ui.locked || ui.tool !== 'select' || e.button !== 0) {
+      return; // fly mode / Draw tool handle their own events; non-left buttons don't pan.
     }
     try {
       canvas.setPointerCapture(e.pointerId);
@@ -109,6 +111,9 @@ export function attachInteractions(
     'wheel',
     (e) => {
       e.preventDefault();
+      if (ui.locked) {
+        return; // fly mode owns zoom (about the center) while locked
+      }
       gliding = false;
       const zoomBefore = cam.zoom;
       const [wx, wy] = worldAt(e.clientX, e.clientY);
@@ -133,8 +138,8 @@ export function attachInteractions(
 
   // --- Focus glide: spring the focus to the double-clicked world point (§7.6). ---
   canvas.addEventListener('dblclick', (e) => {
-    if (ui.tool !== 'select') {
-      return; // In Draw mode a click makes a 1×1 cell; glide would clash.
+    if (ui.locked || ui.tool !== 'select') {
+      return; // In Draw mode a click makes a 1×1 cell; in fly mode there's no glide.
     }
     [targetX, targetY] = worldAt(e.clientX, e.clientY);
     gliding = true;

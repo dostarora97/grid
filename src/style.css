@@ -179,3 +179,61 @@ body {
   align-items: center;
   cursor: pointer;
 }
+
+/* Fly-mode HUD — center reticle + joystick indicator (Architecture §16 exp). */
+.fly-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: none;
+  pointer-events: none;
+}
+
+.fly-hud.on {
+  display: block;
+}
+
+/* Center reticle: a crosshair marking the exact stamp point (= the focus). */
+.fly-reticle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  transform: translate(-50%, -50%);
+  background:
+    linear-gradient(#e8ecf5, #e8ecf5) center / 1.5px 100% no-repeat,
+    linear-gradient(#e8ecf5, #e8ecf5) center / 100% 1.5px no-repeat;
+  opacity: 0.85;
+  mix-blend-mode: screen;
+}
+
+/* Joystick dot: sits at center, translated by the virtual stick offset. */
+.fly-stick {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: #4fa3ff;
+  box-shadow: 0 0 8px rgba(79, 163, 255, 0.9);
+}
+
+.fly-hint {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  font:
+    11px/1.4 system-ui,
+    sans-serif;
+  color: #cfd3dc;
+  white-space: nowrap;
+  background: rgba(20, 22, 28, 0.82);
+  border: 1px solid #2e313a;
+  border-radius: 8px;
+  backdrop-filter: blur(6px);
+}

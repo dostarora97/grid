@@ -100,3 +100,26 @@ export const TAIL: TailKind = 'rational';
 
 /** Numeric tail selector uploaded in the camera uniform (must match the shader). */
 export const TAIL_MODE: Record<TailKind, number> = { rational: 0, tanh: 1, atan: 2 };
+
+/**
+ * Fly mode — velocity steering under pointer lock (experiment). The cursor is
+ * locked at the screen center; raw mouse deltas integrate into a virtual "stick"
+ * offset (clamped to `radiusPx`), and the stick's distance from center sets a
+ * continuous pan SPEED (not a displacement). Dead-zone → true zero at center;
+ * speed ramps as `norm^curveExp` up to `maxSpeedPx` (screen px/s, ÷zoom → world,
+ * so it feels constant on screen at any zoom). See ARCHITECTURE §16 (v0.8 exp).
+ */
+export const FLY = {
+  /** Stick px gained per raw (unaccelerated) movement px. */
+  sensitivity: 0.6,
+  /** Stick clamp radius — the "edge" of the joystick, in stick px. */
+  radiusPx: 260,
+  /** Below this |stick|, velocity is exactly zero. */
+  deadzonePx: 14,
+  /** Max pan speed at full stick, in *screen* px/s (divided by zoom → world). */
+  maxSpeedPx: 1600,
+  /** Speed-curve exponent (>1 gives finer low-speed control). */
+  curveExp: 2,
+  /** Request raw, OS-acceleration-free deltas (Chrome `unadjustedMovement`). */
+  unadjustedMovement: true,
+} as const;

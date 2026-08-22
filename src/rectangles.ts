@@ -16,16 +16,19 @@ type Preview = { x0: number; y0: number; x1: number; y1: number; valid: boolean 
 const CAP = 256;
 
 /** Per-rectangle GPU record: world-space corners + a discrete state flag.
- * flags: 0 = normal, 1 = selected, 2 = preview-valid, 3 = preview-invalid. */
+ * flags: 0 = normal, 1 = selected, 2 = preview-valid, 3 = preview-invalid,
+ * 4 = center ghost (fly-mode "will stamp here" reticle cell). */
 const RectGPU = d.struct({ min: d.vec2f, max: d.vec2f, flags: d.f32 });
 
 // Appearance (translucent fill + crisp outline; direction-tint shows through).
 const FILL_ALPHA = 0.1;
 const SELECTED_FILL_ALPHA = 0.22;
 const PREVIEW_FILL_ALPHA = 0.16;
+const GHOST_FILL_ALPHA = 0.08;
 const OUTLINE_ALPHA = 0.7;
 const PREVIEW_OUTLINE_BOOST = 0.25;
 const SELECTED_OUTLINE_BOOST = 0.3;
+const GHOST_OUTLINE_BOOST = 0.15;
 const OUTLINE_PX = 1.5;
 
 type Root = Awaited<ReturnType<typeof tgpu.init>>;
@@ -76,21 +79,41 @@ export function createRectangles(opts: {
   let selectedId: number | null = null;
   let nextId = 1;
 
-  // Rubber-band draw state.
+  // Rubber-band draw state (shared by pointer-draw and fly-mode center strokes;
+  // the two are mutually exclusive — fly locks the pointer).
   let dragging = false;
   let anchor: [number, number] | null = null;
   let preview: Preview | null = null;
+  // Fly mode: a world-pinned stroke anchor + a "will stamp here" center ghost cell.
+  let strokeAnchor: [number, number] | null = null;
+  let ghostCell: [number, number] | null = null;
 
   const buffer = root.createBuffer(d.arrayOf(RectGPU, CAP)).$usage('storage');
   const store = buffer.as('readonly');
 
-  /** Number of instances to draw = committed rects + the live preview (if any). */
-  const count = (): number => Math.min(rects.length + (preview ? 1 : 0), CAP);
+  /** Instances to draw = committed rects + a live preview + a center ghost (each optional). */
+  const count = (): number => Math.min(rects.length + (preview ? 1 : 0) + (ghostCell ? 1 : 0), CAP);
 
-  /** Mirror the active rectangles (+ preview) into the storage buffer. Only called
-   * on create/delete/select and during an active drag — never per frame. */
+  /** Mirror the active rectangles (+ preview, + center ghost) into the storage
+   * buffer. Called on create/delete/select, during a drag, and — in fly mode —
+   * each frame the center cell changes (a moving HUD element; still ≤CAP structs). */
   function sync(): void {
     const g = GRID.spacing;
+    const extras: { min: d.v2f; max: d.v2f; flags: number }[] = [];
+    if (preview) {
+      extras.push({
+        min: d.vec2f(preview.x0 * g, preview.y0 * g),
+        max: d.vec2f((preview.x1 + 1) * g, (preview.y1 + 1) * g),
+        flags: preview.valid ? 2 : 3,
+      });
+    }
+    if (ghostCell) {
+      extras.push({
+        min: d.vec2f(ghostCell[0] * g, ghostCell[1] * g),
+        max: d.vec2f((ghostCell[0] + 1) * g, (ghostCell[1] + 1) * g),
+        flags: 4,
+      });
+    }
     const data = Array.from({ length: CAP }, (_unused, i) => {
       if (i < rects.length) {
         const r = rects[i];
@@ -100,14 +123,7 @@ export function createRectangles(opts: {
           flags: r.id === selectedId ? 1 : 0,
         };
       }
-      if (preview && i === rects.length) {
-        return {
-          min: d.vec2f(preview.x0 * g, preview.y0 * g),
-          max: d.vec2f((preview.x1 + 1) * g, (preview.y1 + 1) * g),
-          flags: preview.valid ? 2 : 3,
-        };
-      }
-      return { min: d.vec2f(0, 0), max: d.vec2f(0, 0), flags: 0 };
+      return extras[i - rects.length] ?? { min: d.vec2f(0, 0), max: d.vec2f(0, 0), flags: 0 };
     });
     buffer.write(data);
   }
@@ -153,6 +169,111 @@ export function createRectangles(opts: {
     markDirty();
   }
 
+  /** Commit a preview to a real rectangle if it's valid; returns whether it did. */
+  function commitPreview(p: Preview | null): boolean {
+    if (!p?.valid) {
+      return false;
+    }
+    const r: Rect = { id: nextId, x0: p.x0, y0: p.y0, x1: p.x1, y1: p.y1 };
+    nextId += 1;
+    rects.push(r);
+    log.input.debug('rect:create', { rect: r, total: rects.length });
+    return true;
+  }
+
+  // --- Fly-mode API (velocity steering under pointer lock; ARCHITECTURE §16 exp).
+  //     All action happens at the screen center = the focus cell. The controller
+  //     (fly.ts) drives these; drawing/deleting never needs to leave lock. ---
+
+  /** The cell at the screen center — the focus maps exactly to the center pixel. */
+  function centerCell(): [number, number] {
+    return [Math.floor(cam.focusX / GRID.spacing), Math.floor(cam.focusY / GRID.spacing)];
+  }
+
+  /** Show/hide the "will stamp here" ghost at the current center cell. */
+  function setGhost(on: boolean): void {
+    const next = on ? centerCell() : null;
+    ghostCell = next;
+    sync();
+    markDirty();
+  }
+
+  /** Move the ghost to the current center cell if it changed (called each frame while flying). */
+  function refreshGhost(): void {
+    if (!ghostCell || strokeAnchor) {
+      return;
+    }
+    const [cx, cy] = centerCell();
+    if (cx === ghostCell[0] && cy === ghostCell[1]) {
+      return;
+    }
+    ghostCell = [cx, cy];
+    sync();
+    markDirty();
+  }
+
+  /** Drop a world-pinned anchor at the center cell and begin a hold-to-grow stroke. */
+  function beginCenterStroke(): void {
+    strokeAnchor = centerCell();
+    ghostCell = null;
+    preview = candidate(strokeAnchor, strokeAnchor);
+    sync();
+    markDirty();
+  }
+
+  /** Grow the stroke to span anchor→current center cell (called each frame while held). */
+  function updateCenterStroke(): void {
+    if (!strokeAnchor) {
+      return;
+    }
+    const next = candidate(strokeAnchor, centerCell());
+    if (
+      preview &&
+      next.x0 === preview.x0 &&
+      next.y0 === preview.y0 &&
+      next.x1 === preview.x1 &&
+      next.y1 === preview.y1
+    ) {
+      return; // unchanged — skip the redundant write
+    }
+    preview = next;
+    sync();
+    markDirty();
+  }
+
+  /** Commit the stroke (create if valid); returns to ghost mode afterward. */
+  function commitCenterStroke(): void {
+    if (!strokeAnchor) {
+      return;
+    }
+    if (!commitPreview(preview)) {
+      log.input.debug('rect:fly:reject', { reason: preview ? 'overlap' : 'none' });
+    }
+    strokeAnchor = null;
+    preview = null;
+    ghostCell = centerCell();
+    sync();
+    markDirty();
+  }
+
+  /** Abort the in-progress stroke without creating anything. */
+  function cancelCenterStroke(): void {
+    strokeAnchor = null;
+    preview = null;
+    sync();
+    markDirty();
+  }
+
+  /** Delete the rectangle currently under the center (fly-mode right-click). */
+  function deleteAtCenter(): void {
+    const [cx, cy] = centerCell();
+    const hit = rects.find((r) => cx >= r.x0 && cx <= r.x1 && cy >= r.y0 && cy <= r.y1);
+    if (hit) {
+      deleteById(hit.id);
+      log.input.debug('rect:fly:delete', { id: hit.id, total: rects.length });
+    }
+  }
+
   // --- Pointer handling. Draw tool = rubber-band create; Select tool = click to
   //     select (a drag pans, handled in interactions.ts); right-click = delete under
   //     the cursor (any tool). A press that moves past CLICK_SLOP is a drag, not a click.
@@ -161,8 +282,8 @@ export function createRectangles(opts: {
   let selMoved = false;
 
   canvas.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) {
-      return; // left button only; right-click is handled by contextmenu
+    if (ui.locked || e.button !== 0) {
+      return; // fly mode owns the mouse when locked; else left button only
     }
     if (ui.tool === 'draw') {
       try {
@@ -184,6 +305,9 @@ export function createRectangles(opts: {
   });
 
   canvas.addEventListener('pointermove', (e) => {
+    if (ui.locked) {
+      return;
+    }
     if (dragging && anchor) {
       preview = candidate(anchor, cellAt(e.clientX, e.clientY));
       sync();
@@ -199,6 +323,9 @@ export function createRectangles(opts: {
   });
 
   const onPointerEnd = (e: PointerEvent): void => {
+    if (ui.locked) {
+      return;
+    }
     if (dragging) {
       dragging = false;
       try {
@@ -206,18 +333,7 @@ export function createRectangles(opts: {
       } catch {
         // Nothing to release for synthetic/uncaptured pointers.
       }
-      if (preview?.valid) {
-        const r: Rect = {
-          id: nextId,
-          x0: preview.x0,
-          y0: preview.y0,
-          x1: preview.x1,
-          y1: preview.y1,
-        };
-        nextId += 1;
-        rects.push(r);
-        log.input.debug('rect:create', { rect: r, total: rects.length });
-      } else {
+      if (!commitPreview(preview)) {
         log.input.debug('rect:draw:reject', { reason: preview ? 'overlap' : 'none' });
       }
       preview = null;
@@ -248,6 +364,9 @@ export function createRectangles(opts: {
   // Right-click: immediate delete of the rectangle under the cursor (no menu).
   canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    if (ui.locked) {
+      return; // fly mode handles right-click delete at the center
+    }
     const hit = pickAt(e.clientX, e.clientY);
     if (hit) {
       deleteById(hit.id);
@@ -311,10 +430,15 @@ export function createRectangles(opts: {
     'use gpu';
     const flags = input.flags;
     // Decode discrete state without == (thresholds on the flag value).
-    const isSelected =
-      std.select(d.f32(0), d.f32(1), flags > 0.5) - std.select(d.f32(0), d.f32(1), flags > 1.5);
-    const isPreview = std.select(d.f32(0), d.f32(1), flags > 1.5);
-    const isInvalid = std.select(d.f32(0), d.f32(1), flags > 2.5);
+    // flags: 0 normal, 1 selected, 2 preview-valid, 3 preview-invalid, 4 ghost.
+    const gt05 = std.select(d.f32(0), d.f32(1), flags > 0.5);
+    const gt15 = std.select(d.f32(0), d.f32(1), flags > 1.5);
+    const gt25 = std.select(d.f32(0), d.f32(1), flags > 2.5);
+    const gt35 = std.select(d.f32(0), d.f32(1), flags > 3.5);
+    const isSelected = gt05 - gt15; // flags == 1
+    const isPreview = gt15 - gt35; // flags in {2, 3}
+    const isInvalid = gt25 - gt35; // flags == 3
+    const isGhost = gt35; // flags == 4
 
     // Distance to the nearest quad edge, in uv units → px via fwidth.
     const edge = std.min(
@@ -324,14 +448,17 @@ export function createRectangles(opts: {
     const w = std.fwidth(edge);
     const outline = d.f32(1) - std.smoothstep(d.f32(0), w * OUTLINE_PX, edge);
 
+    const isNormal = d.f32(1) - isSelected - isPreview - isGhost;
     const fillA =
-      d.f32(FILL_ALPHA) * (d.f32(1) - isSelected) * (d.f32(1) - isPreview) +
+      d.f32(FILL_ALPHA) * isNormal +
       d.f32(SELECTED_FILL_ALPHA) * isSelected +
-      d.f32(PREVIEW_FILL_ALPHA) * isPreview;
+      d.f32(PREVIEW_FILL_ALPHA) * isPreview +
+      d.f32(GHOST_FILL_ALPHA) * isGhost;
     const outlineA =
       d.f32(OUTLINE_ALPHA) +
       isPreview * d.f32(PREVIEW_OUTLINE_BOOST) +
-      isSelected * d.f32(SELECTED_OUTLINE_BOOST);
+      isSelected * d.f32(SELECTED_OUTLINE_BOOST) +
+      isGhost * d.f32(GHOST_OUTLINE_BOOST);
     const a = std.max(fillA, outline * outlineA);
 
     // White normally; red when the preview would overlap (invalid).
@@ -353,5 +480,18 @@ export function createRectangles(opts: {
     },
   });
 
-  return { pipeline, rects, count };
+  return {
+    pipeline,
+    rects,
+    count,
+    // Fly-mode driving API (see fly.ts):
+    centerCell,
+    setGhost,
+    refreshGhost,
+    beginCenterStroke,
+    updateCenterStroke,
+    commitCenterStroke,
+    cancelCenterStroke,
+    deleteAtCenter,
+  };
 }

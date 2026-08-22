@@ -1,3 +1,4 @@
+import type { FlyTune } from './fly';
 import type { CameraState, UiState } from './interactions';
 
 /** Live render settings mutated by the panel and uploaded in the camera uniform. */
@@ -23,6 +24,10 @@ type PanelOptions = {
   ui: UiState;
   /** Switch the active tool (updates state, cursor, and panel highlight). */
   setTool: (tool: UiState['tool']) => void;
+  /** Live fly-mode tunables (mutated in place by the Fly section). */
+  flyTune: FlyTune;
+  /** Enter fly mode (pointer lock) — must run from a user gesture (button click). */
+  enterFly: () => void;
   levelCount: number;
   /** World spacing of level n (for labels). */
   levelSpacing: (n: number) => number;
@@ -64,8 +69,19 @@ function formatSpacing(v: number): string {
  * `onChange`; `syncers` re-read state into the controls (used on open / reset).
  */
 export function createSettingsPanel(opts: PanelOptions): { refresh: () => void } {
-  const { settings, cam, ui, setTool, levelCount, levelSpacing, zoomRange, onChange, resetView } =
-    opts;
+  const {
+    settings,
+    cam,
+    ui,
+    setTool,
+    flyTune,
+    enterFly,
+    levelCount,
+    levelSpacing,
+    zoomRange,
+    onChange,
+    resetView,
+  } = opts;
   const defaults = structuredClone(settings);
   const syncers: (() => void)[] = [];
   const refresh = () => {
@@ -143,6 +159,79 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
     toolRow.append(btn);
   }
   toolSec.append(toolRow);
+
+  // --- Fly mode (experiment) ---
+  const flySec = section('Fly mode (pointer lock)');
+  const flyRow = el('div', 'sp-row');
+  const flyBtn = el('button', 'sp-btn', 'Enter fly (F)');
+  flyBtn.type = 'button';
+  const flyBtnSync = () => {
+    flyBtn.textContent = ui.locked ? 'Flying — Esc to exit' : 'Enter fly (F)';
+    flyBtn.classList.toggle('on', ui.locked);
+  };
+  flyBtn.addEventListener('click', () => {
+    if (!ui.locked) {
+      enterFly();
+    }
+  });
+  syncers.push(flyBtnSync);
+  flyRow.append(flyBtn);
+  flySec.append(flyRow);
+  addSlider(
+    flySec,
+    'sens',
+    0.1,
+    2,
+    0.05,
+    () => flyTune.sensitivity,
+    (v) => {
+      flyTune.sensitivity = v;
+    },
+  );
+  addSlider(
+    flySec,
+    'max spd',
+    200,
+    4000,
+    50,
+    () => flyTune.maxSpeedPx,
+    (v) => {
+      flyTune.maxSpeedPx = v;
+    },
+  );
+  addSlider(
+    flySec,
+    'deadzone',
+    0,
+    60,
+    1,
+    () => flyTune.deadzonePx,
+    (v) => {
+      flyTune.deadzonePx = v;
+    },
+  );
+  addSlider(
+    flySec,
+    'radius',
+    80,
+    500,
+    10,
+    () => flyTune.radiusPx,
+    (v) => {
+      flyTune.radiusPx = v;
+    },
+  );
+  addSlider(
+    flySec,
+    'curve',
+    1,
+    4,
+    0.1,
+    () => flyTune.curveExp,
+    (v) => {
+      flyTune.curveExp = v;
+    },
+  );
 
   // --- Grid levels ---
   const levelsSec = section('Grid levels (world spacing)');

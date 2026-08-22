@@ -61,6 +61,22 @@ Tooling: TypeGPU Runtime Inspector MCP (not wired). Persistence: scene serializa
   - *Candidate (watch): **HTML-in-Canvas API*** (`copyElementImageToTexture`, WebGPU) to render real DOM/CSS text into a node texture we sample on the projected quad — a possible alternative to MSDF. Caveat: its interactive/accessible DOM sync uses an affine `DOMMatrix`, so it aligns only near the focus under our non-linear Φ; use render-only + our own CPU picking. Experimental (Chrome origin trial) — don't depend on it. Refs cloned to `.playground/html-in-canvas` (see `Examples/webgpu-jelly-slider`, `README.md`).
 - v5 — Scale (compute-shader culling → indirect draw) *only when profiling demands*.
 
+## Experiments (branches, not on main)
+- **`exp/velocity-pointer-lock` — fly mode.** Velocity steering under the Pointer Lock
+  API: `F` enters (Esc/`F` exit), the OS cursor hides and locks to canvas center,
+  raw mouse deltas integrate into a virtual joystick "stick" (clamped to `radiusPx`)
+  whose distance from center sets a continuous pan SPEED (÷zoom → zoom-stable). The
+  center is the focus, so everything happens there: a center-cell **ghost** shows where
+  a click lands, **left-click** stamps a 1×1, **press-hold-then-fly-the-corner** grows a
+  block, **right-click** deletes under center, **Space** hard-stops. Unifies pan+draw
+  into one mouse-only loop (no per-action key). Normal mode (V/R, drag-draw, click-select)
+  kept alongside (additive). New: `src/fly.ts` (+ `fly.test.ts` for the velocity curve),
+  HUD in `main.ts`, `FLY` tunables + panel Fly section, `UiState.locked`. Notes:
+  browser owns Esc-to-exit (can't prevent) + a ~1s re-lock cooldown after Esc; DOM panel
+  is unreachable while locked (exit to use it); `requestPointerLock` needs a real user
+  gesture (fails gracefully otherwise — verified). *Feel-tuning (sensitivity/curve/…)
+  pending live use; decide whether to merge, keep as a mode, or fold into main.*
+
 ## v2 design — rectangles (decided)
 Conceptual model: **a rectangle is a contiguous block of grid cells, given a fill** —
 an annotation on the same lattice, not a new coordinate system. Geometry is **integer
