@@ -181,14 +181,14 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
   const ringInput = el('input');
   ringInput.type = 'checkbox';
   const ringSync = () => {
-    ringInput.checked = flyTune.showStick;
+    ringInput.checked = flyTune.showHud;
   };
   ringInput.addEventListener('change', () => {
-    flyTune.showStick = ringInput.checked;
+    flyTune.showHud = ringInput.checked;
     onChange();
   });
   syncers.push(ringSync);
-  ringLabel.append(ringInput, el('span', undefined, 'show joystick ring'));
+  ringLabel.append(ringInput, el('span', undefined, 'show fly HUD'));
   flySec.append(ringLabel);
   addSlider(
     flySec,

@@ -22,7 +22,7 @@ export type FlyTune = {
   maxSpeedPx: number;
   curveExp: number;
   unadjustedMovement: boolean;
-  showStick: boolean;
+  showHud: boolean;
 };
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);

@@ -122,6 +122,6 @@ export const FLY = {
   curveExp: 2,
   /** Request raw, OS-acceleration-free deltas (Chrome `unadjustedMovement`). */
   unadjustedMovement: true,
-  /** Show the joystick ring in the HUD while flying (crosshair always shows). */
-  showStick: true,
+  /** Show the fly HUD (crosshair + joystick ring + hint) while flying. Off by default. */
+  showHud: false,
 } as const;
