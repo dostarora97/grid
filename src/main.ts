@@ -1,6 +1,8 @@
 import { common, d, std, tgpu } from 'typegpu';
 import { CameraStruct } from './camera';
 import { attachInteractions, type CameraState } from './interactions';
+import { log } from './logger';
+import { attachInputTelemetry } from './telemetry';
 import { CAMERA, COLORS, GRID, TAIL, TAIL_MODE } from './tunables';
 
 const canvasEl = document.querySelector<HTMLCanvasElement>('#canvas');
@@ -11,6 +13,14 @@ const canvas: HTMLCanvasElement = canvasEl;
 
 const root = await tgpu.init();
 const context = root.configureContext({ canvas, alphaMode: 'premultiplied' });
+
+log.boot.info('GPU ready', {
+  preferredFormat: navigator.gpu.getPreferredCanvasFormat(),
+  maxTextureDimension2D: root.device.limits.maxTextureDimension2D,
+  features: [...root.device.features],
+  limits: root.device.limits,
+});
+log.boot.debug('tunables', { GRID, COLORS, CAMERA, TAIL, tailMode: TAIL_MODE[TAIL] });
 
 // CPU-side camera state — the whole per-frame upload (Architecture §7.1, §8.3).
 const cam: CameraState = { focusX: 0, focusY: 0, zoom: CAMERA.defaultZoom };
@@ -110,9 +120,18 @@ const pipeline = root.createRenderPipeline({
   },
 });
 
+log.boot.info('render pipeline created — starting loop');
+
 let dirty = true;
 
 function writeCamera() {
+  const snapshot = {
+    focus: { x: cam.focusX, y: cam.focusY },
+    zoom: cam.zoom,
+    resolution: { w: canvas.width, h: canvas.height },
+    tailMode: TAIL_MODE[TAIL],
+  };
+  log.camera.silly('write', snapshot);
   camera.write({
     focus: d.vec2f(cam.focusX, cam.focusY),
     zoom: cam.zoom,
@@ -126,13 +145,21 @@ const markDirty = () => {
   dirty = true;
 };
 const interactions = attachInteractions(canvas, cam, markDirty);
+attachInputTelemetry(canvas);
 
 let lastTime = performance.now();
+let frameNo = 0;
 function frame(now: number) {
   const dt = Math.min((now - lastTime) / 1000, 0.05); // clamp long stalls
   lastTime = now;
   interactions.tick(dt); // advances the glide spring, marking dirty while moving
   if (dirty) {
+    frameNo += 1;
+    log.frame.silly('render', {
+      frame: frameNo,
+      dtMs: +(dt * 1000).toFixed(2),
+      cam: { focusX: cam.focusX, focusY: cam.focusY, zoom: cam.zoom },
+    });
     writeCamera();
     pipeline.withColorAttachment({ view: context }).draw(3);
     dirty = false;
@@ -155,6 +182,13 @@ const observer = new ResizeObserver(([entry]) => {
     canvas.width = w;
     canvas.height = h;
     dirty = true;
+    log.resize.debug('canvas resized', {
+      dpr,
+      css: { w: cssW, h: cssH },
+      device: { w, h },
+      maxDim,
+      entry,
+    });
   }
 });
 observer.observe(canvas, { box: 'content-box' });
