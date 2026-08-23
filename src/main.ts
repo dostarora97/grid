@@ -2,6 +2,8 @@ import { common, d, std, tgpu } from 'typegpu';
 import { CameraStruct } from './camera';
 import { attachInteractions, type CameraState, type UiState } from './interactions';
 import { attachFly, type FlyTune } from './fly';
+import { type GiphyResult } from './giphy';
+import { createGiphySearch } from './giphySearch';
 import { log } from './logger';
 import { createSettingsPanel, type Settings } from './panel';
 import { clearScene, flushScene, loadScene, saveScene } from './persistence';
@@ -269,18 +271,17 @@ if (typeof window !== 'undefined') {
   window.gridSettings = settings;
 }
 
-// Active tool (Select/Pan vs Draw) + fly-lock state — gates pointer behavior.
-const ui: UiState = { tool: 'select', locked: false };
+// UI state: locked = fly mode (pointer-lock velocity); unlocked = grab mode.
+const ui: UiState = { locked: false };
 
-// Rectangles on the grid — instanced quads projected by the forward Φ; owns its
-// own Draw-tool pointer handling (rubber-band create). Architecture §8.2, §9.
+// Media tiles on the grid — instanced quads projected by the forward Φ. Owns the
+// media texture array + placement API (fly.ts / interactions.ts drive it). §8.2, §9.
 const rectangles = createRectangles({
   root,
   camera,
   format: presentationFormat,
   canvas,
   cam,
-  ui,
   markDirty,
   onChange: () => persistScene(),
 });
@@ -304,37 +305,44 @@ if (savedScene) {
   log.boot.info('scene restored', { rects: savedScene.rects.length });
 }
 if (rectangles.rects.length === 0) {
-  // TEMP (media Phase 1): seed one node with a generated test image to verify the
-  // texture → quad path. Removed once GIPHY placement lands.
-  const testId = rectangles.addRect(-4, -3, 3, 3);
-  rectangles.setImage(testId, makeTestImage());
+  log.boot.debug('empty scene — search GIPHY (press /) to place media');
 }
 
-/** Generate a 256² test image (checker + gradient + label) — proves the texture path. */
-function makeTestImage(): OffscreenCanvas {
-  const cv = new OffscreenCanvas(256, 256);
-  const g = cv.getContext('2d');
-  if (g) {
-    const grad = g.createLinearGradient(0, 0, 256, 256);
-    grad.addColorStop(0, '#ff5d8f');
-    grad.addColorStop(1, '#4fa3ff');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 256, 256);
-    g.fillStyle = 'rgba(255,255,255,0.15)';
-    for (let y = 0; y < 8; y++) {
-      for (let x = 0; x < 8; x++) {
-        if ((x + y) % 2 === 0) {
-          g.fillRect(x * 32, y * 32, 32, 32);
-        }
-      }
-    }
-    g.fillStyle = '#fff';
-    g.font = 'bold 40px system-ui, sans-serif';
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText('TEST', 128, 128);
+// --- GIPHY media: search → slide the picked tile under the crosshair → commit. ---
+/** Cell dimensions for a media item, sized to its aspect ratio (max ~8 cells). */
+function mediaCells(width: number, height: number): [number, number] {
+  const maxCells = 8;
+  const aspect = width / height || 1;
+  if (aspect >= 1) {
+    return [maxCells, Math.max(1, Math.round(maxCells / aspect))];
   }
-  return cv;
+  return [Math.max(1, Math.round(maxCells * aspect)), maxCells];
+}
+
+/** On picking a GIPHY result: close the picker and start carrying it in the current mode. */
+function onGiphyPick(r: GiphyResult): void {
+  giphySearch.close();
+  const [cw, ch] = mediaCells(r.width, r.height);
+  rectangles.beginPlacement(cw, ch);
+  void rectangles.setPendingImageFromUrl(r.still);
+  if (resumeFlyAfterPick) {
+    resumeFlyAfterPick = false;
+    fly.enter(); // re-lock → fly-carry (tile pinned to center); else grab-carry (cursor)
+  }
+  log.input.debug('giphy:pick', { giphy: r.id, cells: [cw, ch] });
+}
+
+const giphySearch = createGiphySearch({ onPick: onGiphyPick });
+
+// Open the GIPHY picker; in fly we drop the lock so the DOM picker is usable, and
+// remember to re-lock (resume fly-carry) once something is picked.
+let resumeFlyAfterPick = false;
+function openPicker(): void {
+  resumeFlyAfterPick = ui.locked;
+  if (ui.locked) {
+    fly.exit();
+  }
+  giphySearch.open();
 }
 
 // Flush the latest state (incl. camera view) when the tab is hidden or closed.
@@ -375,7 +383,7 @@ const hud = document.createElement('div');
 hud.className = 'fly-hud';
 hud.innerHTML =
   '<div class="fly-reticle"></div><div class="fly-stick"></div>' +
-  '<div class="fly-hint">fly — move to steer · click = 1×1 · hold Shift to draw a box · right-click delete · Space stop · F/Esc exit</div>';
+  '<div class="fly-hint">fly — move to steer · A = add media · click to drop · right-click delete · Space stop · Shift/Esc = grab</div>';
 document.body.append(hud);
 const hudStick = hud.querySelector<HTMLElement>('.fly-stick');
 
@@ -387,7 +395,7 @@ const fly = attachFly({
   tune: flyTune,
   markDirty,
   onLock: (locked) => {
-    hud.classList.toggle('on', locked); // crosshair shows whenever flying
+    hud.classList.toggle('on', locked); // crosshair shows only while flying
     panel.refresh();
   },
 });
@@ -407,9 +415,9 @@ const panel = createSettingsPanel({
   settings,
   cam,
   ui,
-  setTool: (t) => setTool(t),
   flyTune,
   enterFly: () => fly.enter(),
+  openGiphy: () => openPicker(),
   clearScene: clearSaved,
   levelCount: LEVELS,
   levelSpacing: (n) => GRID.spacing * BASE ** n,
@@ -423,15 +431,8 @@ const panel = createSettingsPanel({
   },
 });
 
-function setTool(tool: UiState['tool']): void {
-  ui.tool = tool;
-  canvas.style.cursor = tool === 'draw' ? 'crosshair' : '';
-  panel.refresh();
-  log.input.debug('tool', { tool });
-}
-setTool('select');
-
-// V = Select, R = Draw (ignored while typing in a panel control).
+// Keys: Shift toggles grab ↔ fly; A adds media (GIPHY); Esc cancels a carry.
+// (Ignored while typing in a panel/search control.)
 window.addEventListener('keydown', (e) => {
   const target = e.target;
   if (
@@ -440,16 +441,27 @@ window.addEventListener('keydown', (e) => {
   ) {
     return;
   }
-  if (e.key === 'v' || e.key === 'V') {
-    setTool('select');
-  } else if (e.key === 'r' || e.key === 'R') {
-    setTool('draw');
-  } else if (e.key === 'f' || e.key === 'F') {
-    fly.toggle(); // enter/exit pointer-lock fly mode (this keypress is the gesture)
+  if (e.key === 'Shift' && !e.repeat) {
+    if (ui.locked) {
+      fly.exit();
+    } else {
+      fly.enter();
+    }
+  } else if ((e.key === 'a' || e.key === 'A') && !e.repeat) {
+    openPicker();
+  } else if (e.key === 'Escape' && !ui.locked && rectangles.isPlacing()) {
+    rectangles.cancelPlacement(); // grab-carry cancel (fly-carry cancel is Esc→unlock)
   }
 });
 
-const interactions = attachInteractions(canvas, cam, ui, markDirty);
+const interactions = attachInteractions(canvas, cam, ui, markDirty, {
+  isPlacing: rectangles.isPlacing,
+  cellAt: rectangles.cellAt,
+  setPlacementCenterCell: rectangles.setPlacementCenterCell,
+  commitPlacement: rectangles.commitPlacement,
+  cancelPlacement: rectangles.cancelPlacement,
+  deleteAt: rectangles.deleteAt,
+});
 attachInputTelemetry(canvas);
 
 let lastTime = performance.now();
@@ -460,11 +472,11 @@ function frame(now: number) {
   interactions.tick(dt); // advances the glide spring, marking dirty while moving
   fly.tick(dt); // integrates velocity-steering + stroke while locked
   if (ui.locked && hudStick) {
-    // Crosshair always shows while flying (marks the rectangle origin). The ring +
-    // hint are gated by the toggle; the ring also hides while Shift-sizing.
+    // Crosshair always shows while flying (it's the fixed placement reference). The
+    // ring + hint are gated by the toggle; the ring also hides while placing media.
     hud.classList.toggle('hud', flyTune.showHud);
-    const sizing = fly.isSizing();
-    const showRing = flyTune.showHud && !sizing;
+    const placing = fly.isPlacing();
+    const showRing = flyTune.showHud && !placing;
     hudStick.style.display = showRing ? '' : 'none';
     if (showRing) {
       const [sx, sy] = fly.stick();

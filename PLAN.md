@@ -99,24 +99,28 @@ serialization — is now BUILT on the fly branch: see Experiments.)*
   by `isoMode`); the grid is untouched. Verified the toggle live in Chrome. *Decide
   whether isotropic should be per-node vs global, and whether the grid should follow.*
 
-- **Media in nodes (GIPHY) — planned on `exp/isotropic-mode`.** Fill rectangles with
-  images/gifs **as GPU textures painted on the projected quad** (on-canvas, warps with Φ,
-  no DOM → no drift). Decided approach (perf-first): static images via
-  `createImageBitmap` → texture; **animated via GIPHY's mp4 rendition through a hidden
-  `<video>` → `copyExternalImageToTexture` per frame** (hardware-decoded, beats GIF).
-  HTML-in-Canvas (`copyElementImageToTexture`, flag/origin-trial — fine for our opted-in
-  users) is reserved for *arbitrary HTML/text* later, not needed for GIPHY media. Same
-  render path either way ("fill a texture, sample the quad") so it's rework-free.
-  - Rendering: a per-instance texture layer — `RectGPU` gains a `tex` index into a
-    **texture array**; the rect fragment samples it when set, else the flat fill. One
-    pipeline. (Video/external-texture path added when animation lands.)
-  - GIPHY: `/v1/gifs/search` etc.; key in `.env.local` (`VITE_GIPHY_API_KEY`). Persist
-    the giphy id + rendition URL (not bytes) → reload re-fetches from CDN. "Powered By
-    GIPHY" attribution required. See `.playground/giphy-notes.md`.
-  - Placement: pick a result (search) → node dropped at the target cell, snapped to the
-    image aspect. Interactivity in-node stays deferred.
-  - Phases: (1) textured-quad foundation [hardcoded image] · (2) GIPHY search + place ·
-    (3) animated mp4 playback · (4) persist refs · (5) LOD / rendition upgrades.
+- **Media tiles (GIPHY) — BUILT on `exp/isotropic-mode` (static images).** The grid now
+  holds only **media tiles** (images/gifs), painted as **GPU textures on the projected
+  quad** (on-canvas, warps with Φ, no DOM → no drift). Per-instance via a **texture
+  array** (`RectGPU.tex` layer; −1 = none). GIPHY via a **Vite dev proxy** (`/giphy/*`
+  reads `GIPHY_API_KEY` server-side, appends it, strips cookies to dodge GIPHY's oversized-
+  header 400 — key never enters the client). `src/giphy.ts` (search) + `src/giphySearch.ts`
+  (picker overlay, "Powered by GIPHY"). Persists the tile's cell-AABB (image bytes not yet
+  — `tex` index persists; pixels are re-fetched later, Phase 4).
+  - **Interaction (rebuilt to the unified model — the whole rectangle/draw layer is gone).**
+    One grammar: *drive a transform.* **Shift toggles grab ↔ fly** (grab = cursor drag-pan;
+    fly = pointer-lock velocity). **A** = add → opens the GIPHY picker (drops the lock in
+    fly so the popup is usable). Picking **attaches** the tile and you place it *by moving,
+    in whatever mode you're in*: **grab-carry** = tile follows the cursor; **fly-carry** =
+    tile pinned to the center crosshair while you fly the world. **Click drops** it,
+    **right-click deletes** (under cursor / center), **Esc** cancels a carry. **Overlap
+    allowed** (collage), size = ceil-to-cells of the image aspect. Removed: `F`/`R`, Draw/
+    Select tools, rubber-band, 1×1 stamp, Shift-sizing, no-overlap. `UiState` is now just
+    `{ locked }`. Verified the grab path end-to-end in Chrome (pick → follow → drop →
+    persist). Fly path is symmetric but needs live testing (pointer lock isn't scriptable).
+  - **Next:** animated playback (mp4 rendition → hidden `<video>` → per-frame
+    `copyExternalImageToTexture`); persist image refs (re-fetch on load); LOD/rendition
+    upgrades; live fly feel-tuning. HTML-in-Canvas stays reserved for arbitrary HTML later.
 
 ## v2 design — rectangles (decided)
 Conceptual model: **a rectangle is a contiguous block of grid cells, given a fill** —

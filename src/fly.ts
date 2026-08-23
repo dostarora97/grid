@@ -1,16 +1,15 @@
 import type { CameraState, UiState } from './interactions';
 import { log } from './logger';
 import { clampZoom } from './projection';
-import { CAMERA, GRID } from './tunables';
+import { CAMERA } from './tunables';
 
-/** The slice of the rectangles module fly mode drives (all action at the center). */
+/** The slice of the rectangles module fly mode drives. */
 type RectFlyApi = {
-  setGhost: (on: boolean) => void;
-  stampCenter: () => void;
-  beginCenterStroke: () => void;
-  sizeStrokeByCells: (dx: number, dy: number) => void;
-  commitCenterStroke: () => void;
-  cancelCenterStroke: () => void;
+  isPlacing: () => boolean;
+  centerCell: () => [number, number];
+  setPlacementCenterCell: (cx: number, cy: number) => void;
+  commitPlacement: () => number | null;
+  cancelPlacement: () => void;
   deleteAtCenter: () => void;
 };
 
@@ -48,15 +47,14 @@ export function flyVelocity(
 
 /**
  * Fly mode — velocity steering under Pointer Lock (experiment; ARCHITECTURE §16).
- * The OS cursor is hidden and locked to the canvas center; raw mouse deltas
- * integrate into a virtual joystick "stick" (clamped to a radius), whose distance
- * from center sets a continuous pan SPEED (÷zoom → constant on-screen feel). The
- * center cell is always the focus, so drawing happens *there*: left-click stamps
- * a 1×1, right-click deletes under center, Space hard-stops. Holding **Shift** is
- * a spring-loaded draw: it freezes flying and lets the mouse size a rectangle from
- * the center anchor (1:1 with the on-screen grid); releasing Shift commits and
- * resumes flying. Pan/zoom translate the focus *before* Φ, so the world slides
- * uniformly and re-warps each frame (§8.3) — same math as uniform pan.
+ * Locked = "fly"; unlocked = "grab" (Shift toggles, in main). The OS cursor hides
+ * and locks to center; raw mouse deltas integrate into a virtual joystick whose
+ * offset sets a continuous pan SPEED (÷zoom → constant on-screen feel).
+ *
+ * Carrying media (fly-carry): while a media tile is pending, flying still moves the
+ * world and the tile stays **pinned to the center cell** (tracked each tick); a
+ * left-click drops it at center, right-click deletes the tile under center, Space
+ * hard-stops. (Grab-carry — tile follows the cursor — lives in interactions.ts.)
  */
 export function attachFly(opts: {
   canvas: HTMLCanvasElement;
@@ -68,27 +66,18 @@ export function attachFly(opts: {
   onLock?: (locked: boolean) => void;
 }): {
   tick: (dt: number) => void;
-  toggle: () => void;
   enter: () => void;
   exit: () => void;
   stick: () => [number, number];
-  isSizing: () => boolean;
+  isPlacing: () => boolean;
 } {
   const { canvas, cam, ui, rects, tune, markDirty, onLock } = opts;
 
-  // Virtual joystick offset in "stick px", Y-up (screen-up is +). No auto-center:
-  // hold off-center → keep moving; the physical mouse must travel back to stop.
   let stickX = 0;
   let stickY = 0;
-  // Spring-loaded draw (Shift held): flying freezes and mouse deltas integrate into
-  // a cell offset from the anchor instead of steering. `sizeAccum` is in device px.
-  let sizing = false;
-  let sizeAccumX = 0;
-  let sizeAccumY = 0;
 
   function enter(): void {
-    // Must be called from a user gesture. Chrome returns a Promise; older returns
-    // void. Request raw (unaccelerated) deltas for a predictable joystick feel.
+    // Must be called from a user gesture. Request raw (unaccelerated) deltas.
     const request = canvas.requestPointerLock.bind(canvas) as (o?: {
       unadjustedMovement?: boolean;
     }) => Promise<void> | undefined;
@@ -106,51 +95,16 @@ export function attachFly(opts: {
     }
   }
 
-  function toggle(): void {
-    if (ui.locked) {
-      exit();
-    } else {
-      enter();
-    }
-  }
-
-  /** Begin a spring-loaded draw: freeze flying, anchor at center, reset the offset. */
-  function beginSizing(): void {
-    sizing = true;
-    sizeAccumX = 0;
-    sizeAccumY = 0;
-    rects.beginCenterStroke();
-  }
-
-  /** End a spring-loaded draw: commit (if valid) and resume flying. */
-  function endSizing(commit: boolean): void {
-    if (!sizing) {
-      return;
-    }
-    sizing = false;
-    if (commit) {
-      rects.commitCenterStroke();
-    } else {
-      rects.cancelCenterStroke();
-    }
-  }
-
   function handleLockChange(): void {
     const locked = document.pointerLockElement === canvas;
     ui.locked = locked;
     stickX = 0;
     stickY = 0;
-    if (locked) {
-      log.input.debug('fly:enter');
-    } else {
-      endSizing(false); // dropped lock mid-draw → discard
-      rects.setGhost(false); // clear any leftover targeting cell
-      canvas.style.cursor = '';
-      log.input.debug('fly:exit');
+    canvas.style.cursor = locked ? 'none' : '';
+    if (!locked && rects.isPlacing()) {
+      rects.cancelPlacement(); // Esc / lost lock mid-placement → discard the carry
     }
-    if (locked) {
-      canvas.style.cursor = 'none';
-    }
+    log.input.debug(locked ? 'fly:enter' : 'fly:exit');
     markDirty();
     onLock?.(locked);
   }
@@ -159,36 +113,29 @@ export function attachFly(opts: {
     log.input.warn('fly:lock:rejected (needs a user gesture, or re-lock cooldown after Esc)');
   });
 
-  // Motion under lock: while sizing (Shift), integrate deltas into a cell offset
-  // (1:1 with the on-screen grid); otherwise integrate into the steering stick.
+  // Steering: integrate deltas into the joystick (screen Y-down → world Y-up).
   document.addEventListener('mousemove', (e) => {
     if (!ui.locked) {
-      return;
-    }
-    if (sizing) {
-      sizeAccumX += e.movementX;
-      sizeAccumY -= e.movementY; // screen Y-down → world Y-up
-      const pxPerCell = GRID.spacing * cam.zoom; // on-screen cell width at center
-      rects.sizeStrokeByCells(
-        Math.round(sizeAccumX / pxPerCell),
-        Math.round(sizeAccumY / pxPerCell),
-      );
       return;
     }
     stickX = clamp(stickX + e.movementX * tune.sensitivity, -tune.radiusPx, tune.radiusPx);
     stickY = clamp(stickY - e.movementY * tune.sensitivity, -tune.radiusPx, tune.radiusPx);
   });
 
-  // Buttons under lock: left = stamp a 1×1, right = delete under center. (Sized
-  // rectangles are drawn with Shift; buttons are ignored while sizing.)
+  // Left = drop the carried tile; right = delete the tile under the center.
   canvas.addEventListener('mousedown', (e) => {
-    if (!ui.locked || sizing) {
+    if (!ui.locked) {
       return;
     }
-    e.preventDefault();
-    if (e.button === 0) {
-      rects.stampCenter();
-    } else if (e.button === 2) {
+    if (rects.isPlacing()) {
+      if (e.button === 0) {
+        e.preventDefault();
+        rects.commitPlacement();
+      }
+      return;
+    }
+    if (e.button === 2) {
+      e.preventDefault();
       rects.deleteAtCenter();
     }
   });
@@ -208,21 +155,11 @@ export function attachFly(opts: {
   );
 
   window.addEventListener('keydown', (e) => {
-    if (!ui.locked) {
-      return;
-    }
-    if (e.key === 'Shift' && !sizing) {
-      beginSizing(); // spring-loaded draw: freeze + size from the center anchor
-    } else if (e.code === 'Space') {
+    if (ui.locked && e.code === 'Space') {
       e.preventDefault();
       stickX = 0;
       stickY = 0;
       log.input.debug('fly:stop');
-    }
-  });
-  window.addEventListener('keyup', (e) => {
-    if (ui.locked && e.key === 'Shift') {
-      endSizing(true); // release → commit the sized rectangle, resume flying
     }
   });
 
@@ -231,19 +168,22 @@ export function attachFly(opts: {
     return flyVelocity(stickX, stickY, tune);
   }
 
-  /** Advance fly steering by `dt`s: integrate the focus (unless sizing = frozen). */
+  /** Advance fly by `dt`s: integrate the focus; keep any carried tile pinned to center. */
   function tick(dt: number): void {
-    if (!ui.locked || sizing) {
-      return; // while Shift-sizing the world is frozen (no pan)
+    if (!ui.locked) {
+      return;
     }
     const [vsx, vsy] = velocity();
     if (vsx !== 0 || vsy !== 0) {
-      // Screen px/s ÷ zoom → world units/s, so the on-screen speed is zoom-stable.
       cam.focusX += (vsx / cam.zoom) * dt;
       cam.focusY += (vsy / cam.zoom) * dt;
       markDirty();
     }
+    if (rects.isPlacing()) {
+      const [cx, cy] = rects.centerCell();
+      rects.setPlacementCenterCell(cx, cy); // pinned to center as the world flies
+    }
   }
 
-  return { tick, toggle, enter, exit, stick: () => [stickX, stickY], isSizing: () => sizing };
+  return { tick, enter, exit, stick: () => [stickX, stickY], isPlacing: () => rects.isPlacing() };
 }

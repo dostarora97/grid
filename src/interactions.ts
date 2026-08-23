@@ -7,22 +7,34 @@ import { CAMERA } from './tunables';
 /** CPU-side camera state — the authoritative focus + zoom (Architecture §7.1, §8.3). */
 export type CameraState = { focusX: number; focusY: number; zoom: number };
 
-/** Which tool is active — gates whether drags pan/select vs. draw rectangles.
- * `locked` = fly mode (pointer-locked velocity steering) is active; normal-mode
- * pan/zoom/glide and the rectangles pointer handlers stand down while it's true. */
-export type UiState = { tool: 'select' | 'draw'; locked: boolean };
+/** UI state. `locked` = fly mode (pointer-locked velocity). Unlocked = grab mode
+ * (this module: drag to pan, cursor-carry to place, right-click to delete). */
+export type UiState = { locked: boolean };
+
+/** The grab-mode slice of the rectangles module (placement + delete by cursor cell). */
+type GrabPlacement = {
+  isPlacing: () => boolean;
+  cellAt: (clientX: number, clientY: number) => [number, number];
+  setPlacementCenterCell: (cx: number, cy: number) => void;
+  commitPlacement: () => number | null;
+  cancelPlacement: () => void;
+  deleteAt: (cx: number, cy: number) => void;
+};
 
 /**
- * Wire pan (uniform drag), zoom-about-cursor, and focus-glide to the canvas.
- * Pan and glide act only in the Select tool (`ui.tool === 'select'`); zoom works
- * in any tool. Every handler changes only `cam` and calls `markDirty`; the
- * returned `tick` advances the interruptible glide spring each frame (§7.6).
+ * Grab-mode interactions (active when `!ui.locked`): drag to pan (uniform, at the
+ * focus scale so edges don't fling), wheel to zoom-about-cursor, double-click to
+ * glide the focus. While carrying a media tile, the pointer *is* the tile — moving
+ * positions it (cursor cell), left-click drops it, right-click cancels the carry;
+ * otherwise right-click deletes the tile under the cursor. Fly mode (locked) is
+ * handled in fly.ts. The returned `tick` advances the glide spring (§7.6).
  */
 export function attachInteractions(
   canvas: HTMLCanvasElement,
   cam: CameraState,
   ui: UiState,
   markDirty: () => void,
+  place: GrabPlacement,
 ): { tick: (dt: number) => void } {
   const springX = new Spring(cam.focusX);
   const springY = new Spring(cam.focusY);
@@ -30,92 +42,101 @@ export function attachInteractions(
   let targetX = cam.focusX;
   let targetY = cam.focusY;
 
-  /** Pointer offset from the screen center, in device px, Y-up (matches the shader). */
   function offsetPx(clientX: number, clientY: number): [number, number] {
     return offsetPxAt(canvas, clientX, clientY);
   }
-
-  /** World point under the cursor via Φ⁻¹, at the current camera. */
   function worldAt(clientX: number, clientY: number): [number, number] {
     return worldAtPointer(canvas, cam, clientX, clientY);
   }
-
   function syncSprings(): void {
     springX.set(cam.focusX);
     springY.set(cam.focusY);
   }
 
-  // --- Pan: uniform drag at the focus scale (1/zoom) — constant rate no matter
-  // where you grab, so the edges don't fling. Near the center this matches
-  // grab-and-pull; everywhere else it stays uniform ("always feels like origin").
-  // The pointer delta (device px) is converted to world units at the focus
-  // scale, independent of the projection's wildly-varying local scale (§7.6).
   let panning = false;
   let lastOx = 0;
   let lastOy = 0;
+
   canvas.addEventListener('pointerdown', (e) => {
-    if (ui.locked || ui.tool !== 'select' || e.button !== 0) {
-      return; // fly mode / Draw tool handle their own events; non-left buttons don't pan.
+    if (ui.locked || e.button !== 0) {
+      return; // fly mode owns the mouse; non-left buttons don't pan
+    }
+    if (place.isPlacing()) {
+      place.commitPlacement(); // carrying a tile → left-click drops it (no pan)
+      return;
     }
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {
-      // Ignore: capture is a best-effort convenience (and absent for synthetic events).
+      // Best-effort capture; absent for synthetic events.
     }
     panning = true;
     gliding = false;
     [lastOx, lastOy] = offsetPx(e.clientX, e.clientY);
-    log.input.debug('pan:start', {
-      pointerId: e.pointerId,
-      client: { x: e.clientX, y: e.clientY },
-      focus: { x: cam.focusX, y: cam.focusY },
-      zoom: cam.zoom,
-    });
+    log.input.debug('pan:start', { client: { x: e.clientX, y: e.clientY }, zoom: cam.zoom });
   });
+
   canvas.addEventListener('pointermove', (e) => {
+    if (place.isPlacing()) {
+      // Carrying: the tile follows the cursor cell; hide the OS cursor (tile is it).
+      canvas.style.cursor = 'none';
+      const [cx, cy] = place.cellAt(e.clientX, e.clientY);
+      place.setPlacementCenterCell(cx, cy);
+      return;
+    }
+    if (canvas.style.cursor === 'none') {
+      canvas.style.cursor = '';
+    }
     if (!panning) {
       return;
     }
     const [ox, oy] = offsetPx(e.clientX, e.clientY);
-    const dWorldX = (ox - lastOx) / cam.zoom;
-    const dWorldY = (oy - lastOy) / cam.zoom;
-    cam.focusX -= dWorldX;
-    cam.focusY -= dWorldY;
+    cam.focusX -= (ox - lastOx) / cam.zoom;
+    cam.focusY -= (oy - lastOy) / cam.zoom;
     lastOx = ox;
     lastOy = oy;
     syncSprings();
     markDirty();
-    log.input.silly('pan:move', {
-      client: { x: e.clientX, y: e.clientY },
-      dWorld: { x: dWorldX, y: dWorldY },
-      focus: { x: cam.focusX, y: cam.focusY },
-    });
   });
-  const endPan = (e: PointerEvent) => {
+
+  const endPan = (e: PointerEvent): void => {
     if (!panning) {
       return;
     }
     panning = false;
-    log.input.debug('pan:end', { pointerId: e.pointerId, focus: { x: cam.focusX, y: cam.focusY } });
     try {
       canvas.releasePointerCapture(e.pointerId);
     } catch {
-      // Ignore: nothing to release for synthetic/uncaptured pointers.
+      // Nothing to release for synthetic/uncaptured pointers.
     }
+    log.input.debug('pan:end', { focus: { x: cam.focusX, y: cam.focusY } });
   };
   canvas.addEventListener('pointerup', endPan);
   canvas.addEventListener('pointercancel', endPan);
 
-  // --- Zoom about the cursor: keep that world point fixed (§7.6). ---
+  // Right-click: cancel a carry, else delete the tile under the cursor.
+  canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (ui.locked) {
+      return; // fly mode handles right-click at the center
+    }
+    if (place.isPlacing()) {
+      place.cancelPlacement();
+      return;
+    }
+    const [cx, cy] = place.cellAt(e.clientX, e.clientY);
+    place.deleteAt(cx, cy);
+  });
+
+  // Zoom about the cursor: keep that world point fixed (§7.6).
   canvas.addEventListener(
     'wheel',
     (e) => {
       e.preventDefault();
       if (ui.locked) {
-        return; // fly mode owns zoom (about the center) while locked
+        return; // fly mode owns zoom (about the center)
       }
       gliding = false;
-      const zoomBefore = cam.zoom;
       const [wx, wy] = worldAt(e.clientX, e.clientY);
       cam.zoom = clampZoom(cam.zoom * Math.exp(-e.deltaY * CAMERA.wheelSensitivity));
       const [ox, oy] = offsetPx(e.clientX, e.clientY);
@@ -123,31 +144,18 @@ export function attachInteractions(
       cam.focusY = wy - unprojectAxis(oy, canvas.height / 2, cam.zoom);
       syncSprings();
       markDirty();
-      log.input.debug('zoom', {
-        deltaY: e.deltaY,
-        deltaMode: e.deltaMode,
-        client: { x: e.clientX, y: e.clientY },
-        worldUnderCursor: { x: wx, y: wy },
-        zoomBefore,
-        zoomAfter: cam.zoom,
-        focus: { x: cam.focusX, y: cam.focusY },
-      });
     },
     { passive: false },
   );
 
-  // --- Focus glide: spring the focus to the double-clicked world point (§7.6). ---
+  // Double-click: glide the focus to that world point (disabled while carrying).
   canvas.addEventListener('dblclick', (e) => {
-    if (ui.locked || ui.tool !== 'select') {
-      return; // In Draw mode a click makes a 1×1 cell; in fly mode there's no glide.
+    if (ui.locked || place.isPlacing()) {
+      return;
     }
     [targetX, targetY] = worldAt(e.clientX, e.clientY);
     gliding = true;
-    log.glide.debug('glide:start', {
-      client: { x: e.clientX, y: e.clientY },
-      from: { x: cam.focusX, y: cam.focusY },
-      target: { x: targetX, y: targetY },
-    });
+    log.glide.debug('glide:start', { target: { x: targetX, y: targetY } });
   });
 
   /** Advance the glide spring by `dt` seconds; a no-op unless a glide is active. */
@@ -160,11 +168,6 @@ export function attachInteractions(
     cam.focusX = springX.value;
     cam.focusY = springY.value;
     markDirty();
-    log.glide.silly('glide:step', {
-      dt,
-      focus: { x: cam.focusX, y: cam.focusY },
-      target: { x: targetX, y: targetY },
-    });
     if (!movingX && !movingY) {
       gliding = false;
       log.glide.debug('glide:end', { focus: { x: cam.focusX, y: cam.focusY } });

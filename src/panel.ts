@@ -24,13 +24,13 @@ type PanelOptions = {
   settings: Settings;
   cam: CameraState;
   ui: UiState;
-  /** Switch the active tool (updates state, cursor, and panel highlight). */
-  setTool: (tool: UiState['tool']) => void;
   /** Live fly-mode tunables (mutated in place by the Fly section). */
   flyTune: FlyTune;
   /** Enter fly mode (pointer lock) — must run from a user gesture (button click). */
   enterFly: () => void;
-  /** Wipe the saved scene + all rectangles. */
+  /** Open the GIPHY picker. */
+  openGiphy: () => void;
+  /** Wipe the saved scene + all tiles. */
   clearScene: () => void;
   levelCount: number;
   /** World spacing of level n (for labels). */
@@ -77,9 +77,9 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
     settings,
     cam,
     ui,
-    setTool,
     flyTune,
     enterFly,
+    openGiphy,
     clearScene,
     levelCount,
     levelSpacing,
@@ -151,27 +151,13 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
     parent.append(row);
   };
 
-  // --- Tool ---
-  const toolSec = section('Tool');
-  const toolRow = el('div', 'sp-row');
-  const toolLabels: Record<UiState['tool'], string> = { select: 'Select (V)', draw: 'Draw (R)' };
-  for (const t of ['select', 'draw'] as const) {
-    const btn = el('button', 'sp-btn', toolLabels[t]);
-    btn.type = 'button';
-    const sync = () => btn.classList.toggle('on', ui.tool === t);
-    btn.addEventListener('click', () => setTool(t));
-    syncers.push(sync);
-    toolRow.append(btn);
-  }
-  toolSec.append(toolRow);
-
   // --- Fly mode (experiment) ---
-  const flySec = section('Fly mode (pointer lock)');
+  const flySec = section('Movement');
   const flyRow = el('div', 'sp-row');
-  const flyBtn = el('button', 'sp-btn', 'Enter fly (F)');
+  const flyBtn = el('button', 'sp-btn', 'Fly (Shift)');
   flyBtn.type = 'button';
   const flyBtnSync = () => {
-    flyBtn.textContent = ui.locked ? 'Flying — Esc to exit' : 'Enter fly (F)';
+    flyBtn.textContent = ui.locked ? 'Flying — Shift/Esc = grab' : 'Fly (Shift)';
     flyBtn.classList.toggle('on', ui.locked);
   };
   flyBtn.addEventListener('click', () => {
@@ -250,6 +236,15 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
       flyTune.curveExp = v;
     },
   );
+
+  // --- Media (GIPHY) ---
+  const mediaSec = section('Media');
+  const mediaRow = el('div', 'sp-row');
+  const giphyBtn = el('button', 'sp-btn', 'Add media (A)');
+  giphyBtn.type = 'button';
+  giphyBtn.addEventListener('click', () => openGiphy());
+  mediaRow.append(giphyBtn);
+  mediaSec.append(mediaRow);
 
   // --- Grid levels ---
   const levelsSec = section('Grid levels (world spacing)');

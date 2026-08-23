@@ -1,19 +1,16 @@
 import { d, std, tgpu, type TgpuUniform } from 'typegpu';
 import { CameraStruct } from './camera';
-import type { CameraState, UiState } from './interactions';
+import type { CameraState } from './interactions';
 import { log } from './logger';
 import { worldAt } from './pointer';
 import { GRID } from './tunables';
 
-/** A rectangle = a block of grid cells (integer indices, inclusive on both ends).
- * It's the grid, shown a certain way: geometry is pure lattice; Φ warps it too.
+/** A media tile = a block of grid cells (integer indices, inclusive on both ends),
+ * filled with an image/gif. Geometry is pure lattice; Φ warps it like the grid.
  * `tex` is a runtime-only media layer index (−1/undefined = none; not persisted). */
 export type Rect = { id: number; x0: number; y0: number; x1: number; y1: number; tex?: number };
 
-/** An in-progress rubber-band candidate (cell AABB) + whether it may be committed. */
-type Preview = { x0: number; y0: number; x1: number; y1: number; valid: boolean };
-
-/** Max rectangles + preview held in the storage buffer (v2; grows later if needed). */
+/** Max tiles (+ pending) held in the storage buffer (grows later if needed). */
 const CAP = 256;
 
 /** Media texture array — per-node images/gifs sampled onto the quad. Square layers
@@ -21,31 +18,18 @@ const CAP = 256;
 const MEDIA_LAYERS = 64;
 const MEDIA_SIZE = 256;
 
-/** Per-rectangle GPU record: world-space corners + a discrete state flag + a media
- * texture-array layer (`tex`, −1 = none). flags: 0 = normal, 1 = selected,
- * 2 = preview-valid, 3 = preview-invalid, 4 = center ghost. */
+/** Per-tile GPU record: world-space corners + a state flag (0 = committed,
+ * 2 = pending placement) + a media texture-array layer (`tex`, −1 = none). */
 const RectGPU = d.struct({ min: d.vec2f, max: d.vec2f, flags: d.f32, tex: d.f32 });
 
 // Appearance (translucent fill + crisp outline; direction-tint shows through).
 const FILL_ALPHA = 0.1;
-const SELECTED_FILL_ALPHA = 0.22;
 const PREVIEW_FILL_ALPHA = 0.16;
-const GHOST_FILL_ALPHA = 0.08;
 const OUTLINE_ALPHA = 0.7;
 const PREVIEW_OUTLINE_BOOST = 0.25;
-const SELECTED_OUTLINE_BOOST = 0.3;
-const GHOST_OUTLINE_BOOST = 0.15;
 const OUTLINE_PX = 1.5;
 
 type Root = Awaited<ReturnType<typeof tgpu.init>>;
-
-/** An axis-aligned cell range (inclusive), independent of a rectangle's identity. */
-type CellAABB = { x0: number; y0: number; x1: number; y1: number };
-
-/** Do two inclusive integer cell-AABBs share a cell? (Adjacency/touching → false.) */
-function overlaps(a: CellAABB, b: CellAABB): boolean {
-  return a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1;
-}
 
 /**
  * Forward Φ tail (world→clip), one axis — the exact inverse of the grid's
@@ -84,12 +68,12 @@ function squashDeriv(pp: number, mode: number): number {
 }
 
 /**
- * Rectangles on the grid: a CPU array of integer cell-AABBs mirrored into a GPU
- * storage buffer, drawn as instanced quads whose corners are projected by the
- * forward Φ (so they foreshorten and align with the grid). In the Draw tool a
- * click-drag rubber-bands a cell-snapped rectangle with a live valid/invalid
- * preview; overlap is forbidden (touching edges are separate cells, so allowed).
- * Create only for v2 (select + delete land in step 4). Architecture §8.2, §9.
+ * Media tiles on the grid: a CPU array of integer cell-AABBs (each filled with an
+ * image/gif) mirrored into a GPU storage buffer, drawn as instanced quads whose
+ * corners are projected by the forward Φ (so they foreshorten and align with the
+ * grid, or stay true-proportion in isotropic mode). Exposes a placement API
+ * (attach → position → commit) that fly.ts and interactions.ts drive, plus delete
+ * and persistence. Architecture §8.2, §9, §16.
  */
 export function createRectangles(opts: {
   root: Root;
@@ -97,24 +81,18 @@ export function createRectangles(opts: {
   format: GPUTextureFormat;
   canvas: HTMLCanvasElement;
   cam: CameraState;
-  ui: UiState;
   markDirty: () => void;
   /** Called after the rectangle set changes (create/delete/clear) — for persistence. */
   onChange?: () => void;
 }) {
-  const { root, camera, format, canvas, cam, ui, markDirty, onChange } = opts;
+  const { root, camera, format, canvas, cam, markDirty, onChange } = opts;
   const rects: Rect[] = [];
-  let selectedId: number | null = null;
   let nextId = 1;
 
-  // Rubber-band draw state (shared by pointer-draw and fly-mode center strokes;
-  // the two are mutually exclusive — fly locks the pointer).
-  let dragging = false;
-  let anchor: [number, number] | null = null;
-  let preview: Preview | null = null;
-  // Fly mode: a world-pinned stroke anchor + a "will stamp here" center ghost cell.
-  let strokeAnchor: [number, number] | null = null;
-  let ghostCell: [number, number] | null = null;
+  // Media placement: a pending tile being positioned before commit. Its top-left
+  // (x0,y0) tracks a "center cell" fed by the active nav mode (fly → screen center;
+  // grab → cursor). Overlap is allowed (collage).
+  let pending: { cw: number; ch: number; x0: number; y0: number; layer: number } | null = null;
 
   const buffer = root.createBuffer(d.arrayOf(RectGPU, CAP)).$usage('storage');
   const store = buffer.as('readonly');
@@ -139,62 +117,179 @@ export function createRectangles(opts: {
   const mediaBindGroup = root.createBindGroup(mediaLayout, { tex: mediaView, samp: mediaSampler });
   let nextLayer = 0;
 
-  /** Upload an image source (canvas/bitmap) to the node's media layer and show it. */
-  function setImage(id: number, source: GPUCopyExternalImageSource): void {
+  /** Reserve the next media-array layer (round-robin). */
+  function allocLayer(): number {
     const layer = nextLayer % MEDIA_LAYERS;
     nextLayer += 1;
+    return layer;
+  }
+
+  /** Copy an image source into a specific media-array layer. */
+  function writeLayer(layer: number, source: GPUCopyExternalImageSource): void {
     root.device.queue.copyExternalImageToTexture(
       { source, flipY: true },
       { texture: root.unwrap(mediaTex), origin: [0, 0, layer] },
       [MEDIA_SIZE, MEDIA_SIZE],
     );
+  }
+
+  /** Load an image URL (cross-origin OK) into a square canvas (null on failure). */
+  async function loadToCanvas(url: string): Promise<OffscreenCanvas | null> {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const done = new Promise<void>((resolve, reject) => {
+      img.addEventListener('load', () => {
+        resolve();
+      });
+      img.addEventListener('error', () => {
+        reject(new Error('image load failed'));
+      });
+    });
+    img.src = url;
+    try {
+      await done;
+    } catch {
+      log.input.warn('rect:media:load-failed', { url });
+      return null;
+    }
+    const cv = new OffscreenCanvas(MEDIA_SIZE, MEDIA_SIZE);
+    const g = cv.getContext('2d');
+    if (!g) {
+      return null;
+    }
+    g.drawImage(img, 0, 0, MEDIA_SIZE, MEDIA_SIZE); // stretch to square; node aspect corrects it
+    return cv;
+  }
+
+  /** Upload an image source to a node's media layer and show it. */
+  function setImage(id: number, source: GPUCopyExternalImageSource): void {
+    const layer = allocLayer();
+    writeLayer(layer, source);
     const r = rects.find((x) => x.id === id);
     if (r) {
       r.tex = layer;
       sync();
       markDirty();
     }
-    log.input.debug('rect:media:set', { id, layer });
   }
 
-  /** Instances to draw = committed rects + a live preview + a center ghost (each optional). */
-  const count = (): number => Math.min(rects.length + (preview ? 1 : 0) + (ghostCell ? 1 : 0), CAP);
+  /** Load an image URL and show it on a node. */
+  async function setImageFromUrl(id: number, url: string): Promise<void> {
+    const cv = await loadToCanvas(url);
+    if (cv) {
+      setImage(id, cv);
+    }
+  }
 
-  /** Mirror the active rectangles (+ preview, + center ghost) into the storage
-   * buffer. Called on create/delete/select, during a drag, and — in fly mode —
-   * each frame the center cell changes (a moving HUD element; still ≤CAP structs). */
+  // --- Media placement: attach a tile, position it by the active mode's center
+  //     cell (fly → screen center; grab → cursor), then commit. Overlap allowed. ---
+
+  /** Begin placing a `cw×ch` tile, centered on the current center (screen) cell. */
+  function beginPlacement(cw: number, ch: number): void {
+    const [cx, cy] = centerCell();
+    pending = {
+      cw,
+      ch,
+      x0: cx - Math.floor(cw / 2),
+      y0: cy - Math.floor(ch / 2),
+      layer: allocLayer(),
+    };
+    sync();
+    markDirty();
+  }
+
+  /** Position the pending tile so it's centered on cell (cx, cy). */
+  function setPlacementCenterCell(cx: number, cy: number): void {
+    if (!pending) {
+      return;
+    }
+    const nx = cx - Math.floor(pending.cw / 2);
+    const ny = cy - Math.floor(pending.ch / 2);
+    if (nx === pending.x0 && ny === pending.y0) {
+      return;
+    }
+    pending.x0 = nx;
+    pending.y0 = ny;
+    sync();
+    markDirty();
+  }
+
+  /** Load an image URL into the pending tile's layer (shows it as it slides). */
+  async function setPendingImageFromUrl(url: string): Promise<void> {
+    if (!pending) {
+      return;
+    }
+    const layer = pending.layer;
+    const cv = await loadToCanvas(url);
+    if (cv && pending && pending.layer === layer) {
+      writeLayer(layer, cv);
+      sync();
+      markDirty();
+    }
+  }
+
+  /** Commit the pending tile to a real media node; returns its id (null if none). */
+  function commitPlacement(): number | null {
+    if (!pending) {
+      return null;
+    }
+    const r: Rect = {
+      id: nextId,
+      x0: pending.x0,
+      y0: pending.y0,
+      x1: pending.x0 + pending.cw - 1,
+      y1: pending.y0 + pending.ch - 1,
+      tex: pending.layer,
+    };
+    nextId += 1;
+    rects.push(r);
+    pending = null;
+    sync();
+    markDirty();
+    onChange?.();
+    log.input.debug('rect:media:placed', { rect: r });
+    return r.id;
+  }
+
+  /** Discard the pending placement without creating anything. */
+  function cancelPlacement(): void {
+    if (!pending) {
+      return;
+    }
+    pending = null;
+    sync();
+    markDirty();
+  }
+
+  /** Whether a placement is in progress. */
+  const isPlacing = (): boolean => pending !== null;
+
+  /** Instances to draw = committed rects + the pending tile (if any). */
+  const count = (): number => Math.min(rects.length + (pending ? 1 : 0), CAP);
+
+  /** Mirror the committed rectangles (+ the pending placement tile) into the storage
+   * buffer. Called on create/delete and while a placement tile is being positioned. */
   function sync(): void {
     const g = GRID.spacing;
-    const extras: { min: d.v2f; max: d.v2f; flags: number; tex: number }[] = [];
-    if (preview) {
-      extras.push({
-        min: d.vec2f(preview.x0 * g, preview.y0 * g),
-        max: d.vec2f((preview.x1 + 1) * g, (preview.y1 + 1) * g),
-        flags: preview.valid ? 2 : 3,
-        tex: -1,
-      });
-    }
-    if (ghostCell) {
-      extras.push({
-        min: d.vec2f(ghostCell[0] * g, ghostCell[1] * g),
-        max: d.vec2f((ghostCell[0] + 1) * g, (ghostCell[1] + 1) * g),
-        flags: 4,
-        tex: -1,
-      });
-    }
     const data = Array.from({ length: CAP }, (_unused, i) => {
       if (i < rects.length) {
         const r = rects[i];
         return {
           min: d.vec2f(r.x0 * g, r.y0 * g),
           max: d.vec2f((r.x1 + 1) * g, (r.y1 + 1) * g),
-          flags: r.id === selectedId ? 1 : 0,
+          flags: 0,
           tex: r.tex ?? -1,
         };
       }
-      return (
-        extras[i - rects.length] ?? { min: d.vec2f(0, 0), max: d.vec2f(0, 0), flags: 0, tex: -1 }
-      );
+      if (pending && i === rects.length) {
+        return {
+          min: d.vec2f(pending.x0 * g, pending.y0 * g),
+          max: d.vec2f((pending.x0 + pending.cw) * g, (pending.y0 + pending.ch) * g),
+          flags: 2, // preview-valid look → brighter outline; textured shows the image
+          tex: pending.layer,
+        };
+      }
+      return { min: d.vec2f(0, 0), max: d.vec2f(0, 0), flags: 0, tex: -1 };
     });
     buffer.write(data);
   }
@@ -205,143 +300,35 @@ export function createRectangles(opts: {
     return [Math.floor(wx / GRID.spacing), Math.floor(wy / GRID.spacing)];
   }
 
-  /** Do two inclusive integer cell-AABBs share a cell? (Adjacency/touching → false.) */
-  function overlapsAny(cand: CellAABB): boolean {
-    return rects.some((r) => overlaps(cand, r));
-  }
-
-  function candidate(a: [number, number], b: [number, number]): Preview {
-    const c: CellAABB = {
-      x0: Math.min(a[0], b[0]),
-      y0: Math.min(a[1], b[1]),
-      x1: Math.max(a[0], b[0]),
-      y1: Math.max(a[1], b[1]),
-    };
-    return { ...c, valid: rects.length < CAP && !overlapsAny(c) };
-  }
-
-  /** The rectangle whose cell-AABB contains the cursor's cell (at most one — no
-   * overlaps), or null. Linear scan in cell space (add flatbush if counts grow). */
-  function pickAt(clientX: number, clientY: number): Rect | null {
-    const [cx, cy] = cellAt(clientX, clientY);
-    return rects.find((r) => cx >= r.x0 && cx <= r.x1 && cy >= r.y0 && cy <= r.y1) ?? null;
-  }
-
   function deleteById(id: number): void {
     const i = rects.findIndex((r) => r.id === id);
     if (i < 0) {
       return;
     }
     rects.splice(i, 1);
-    if (selectedId === id) {
-      selectedId = null;
-    }
     sync();
     markDirty();
     onChange?.();
   }
-
-  /** Commit a preview to a real rectangle if it's valid; returns whether it did. */
-  function commitPreview(p: Preview | null): boolean {
-    if (!p?.valid) {
-      return false;
-    }
-    const r: Rect = { id: nextId, x0: p.x0, y0: p.y0, x1: p.x1, y1: p.y1 };
-    nextId += 1;
-    rects.push(r);
-    log.input.debug('rect:create', { rect: r, total: rects.length });
-    onChange?.();
-    return true;
-  }
-
-  // --- Fly-mode API (velocity steering under pointer lock; ARCHITECTURE §16 exp).
-  //     All action happens at the screen center = the focus cell. The controller
-  //     (fly.ts) drives these; drawing/deleting never needs to leave lock. ---
 
   /** The cell at the screen center — the focus maps exactly to the center pixel. */
   function centerCell(): [number, number] {
     return [Math.floor(cam.focusX / GRID.spacing), Math.floor(cam.focusY / GRID.spacing)];
   }
 
-  /** Show/hide the "will stamp here" ghost at the current center cell. */
-  function setGhost(on: boolean): void {
-    const next = on ? centerCell() : null;
-    ghostCell = next;
-    sync();
-    markDirty();
-  }
-
-  /** Drop a world-pinned anchor at the center cell and begin a sizing stroke. */
-  function beginCenterStroke(): void {
-    strokeAnchor = centerCell();
-    ghostCell = null;
-    preview = candidate(strokeAnchor, strokeAnchor);
-    sync();
-    markDirty();
-  }
-
-  /** Commit the stroke (create if valid); returns to ghost mode afterward. */
-  function commitCenterStroke(): void {
-    if (!strokeAnchor) {
-      return;
-    }
-    if (!commitPreview(preview)) {
-      log.input.debug('rect:fly:reject', { reason: preview ? 'overlap' : 'none' });
-    }
-    strokeAnchor = null;
-    preview = null;
-    ghostCell = null;
-    sync();
-    markDirty();
-  }
-
-  /** Abort the in-progress stroke without creating anything. */
-  function cancelCenterStroke(): void {
-    strokeAnchor = null;
-    preview = null;
-    sync();
-    markDirty();
-  }
-
-  /** Delete the rectangle currently under the center (fly-mode right-click). */
-  function deleteAtCenter(): void {
-    const [cx, cy] = centerCell();
+  /** Delete the media tile whose cell-block contains cell (cx, cy), if any. */
+  function deleteAt(cx: number, cy: number): void {
     const hit = rects.find((r) => cx >= r.x0 && cx <= r.x1 && cy >= r.y0 && cy <= r.y1);
     if (hit) {
       deleteById(hit.id);
-      log.input.debug('rect:fly:delete', { id: hit.id, total: rects.length });
+      log.input.debug('rect:delete', { id: hit.id, total: rects.length });
     }
   }
 
-  /** Stamp a 1×1 rectangle at the center cell (fly-mode left-click), if free. */
-  function stampCenter(): void {
+  /** Delete the tile under the screen center (fly-mode right-click). */
+  function deleteAtCenter(): void {
     const [cx, cy] = centerCell();
-    if (commitPreview(candidate([cx, cy], [cx, cy]))) {
-      sync();
-      markDirty();
-    } else {
-      log.input.debug('rect:fly:stamp:reject', { cell: [cx, cy] });
-    }
-  }
-
-  /** Size the active stroke to anchor→(anchor + dx,dy) cells (Shift-draw, pan frozen). */
-  function sizeStrokeByCells(dx: number, dy: number): void {
-    if (!strokeAnchor) {
-      return;
-    }
-    const next = candidate(strokeAnchor, [strokeAnchor[0] + dx, strokeAnchor[1] + dy]);
-    if (
-      preview &&
-      next.x0 === preview.x0 &&
-      next.y0 === preview.y0 &&
-      next.x1 === preview.x1 &&
-      next.y1 === preview.y1
-    ) {
-      return; // unchanged — skip the redundant write
-    }
-    preview = next;
-    sync();
-    markDirty();
+    deleteAt(cx, cy);
   }
 
   // --- Persistence (see persistence.ts). ---
@@ -361,10 +348,7 @@ export function createRectangles(opts: {
       id,
       rects.reduce((m, r) => Math.max(m, r.id + 1), 1),
     );
-    selectedId = null;
-    preview = null;
-    strokeAnchor = null;
-    ghostCell = null;
+    pending = null;
     sync();
     markDirty();
   }
@@ -373,10 +357,7 @@ export function createRectangles(opts: {
   function clear(): void {
     rects.length = 0;
     nextId = 1;
-    selectedId = null;
-    preview = null;
-    strokeAnchor = null;
-    ghostCell = null;
+    pending = null;
     sync();
     markDirty();
     onChange?.();
@@ -392,135 +373,6 @@ export function createRectangles(opts: {
     onChange?.();
     return r.id;
   }
-
-  // --- Pointer handling. Draw tool = rubber-band create; Select tool = click to
-  //     select (a drag pans, handled in interactions.ts); right-click = delete under
-  //     the cursor (any tool). A press that moves past CLICK_SLOP is a drag, not a click.
-  const CLICK_SLOP = 4; // client px
-  let selDown: [number, number] | null = null;
-  let selMoved = false;
-
-  canvas.addEventListener('pointerdown', (e) => {
-    if (ui.locked || e.button !== 0) {
-      return; // fly mode owns the mouse when locked; else left button only
-    }
-    if (ui.tool === 'draw') {
-      try {
-        canvas.setPointerCapture(e.pointerId);
-      } catch {
-        // Best-effort capture; ignore for synthetic/uncaptured pointers.
-      }
-      dragging = true;
-      anchor = cellAt(e.clientX, e.clientY);
-      preview = candidate(anchor, anchor);
-      sync();
-      markDirty();
-      log.input.debug('rect:draw:start', { anchorCell: anchor, valid: preview.valid });
-      return;
-    }
-    // Select tool: remember the press; a click (no drag) selects on release.
-    selDown = [e.clientX, e.clientY];
-    selMoved = false;
-  });
-
-  canvas.addEventListener('pointermove', (e) => {
-    if (ui.locked) {
-      return;
-    }
-    if (dragging && anchor) {
-      preview = candidate(anchor, cellAt(e.clientX, e.clientY));
-      sync();
-      markDirty();
-      log.input.silly('rect:draw:move', { preview });
-      return;
-    }
-    if (selDown && !selMoved) {
-      if (Math.hypot(e.clientX - selDown[0], e.clientY - selDown[1]) > CLICK_SLOP) {
-        selMoved = true; // became a pan
-      }
-    }
-  });
-
-  const onPointerEnd = (e: PointerEvent): void => {
-    if (ui.locked) {
-      return;
-    }
-    if (dragging) {
-      dragging = false;
-      try {
-        canvas.releasePointerCapture(e.pointerId);
-      } catch {
-        // Nothing to release for synthetic/uncaptured pointers.
-      }
-      if (!commitPreview(preview)) {
-        log.input.debug('rect:draw:reject', { reason: preview ? 'overlap' : 'none' });
-      }
-      preview = null;
-      anchor = null;
-      sync();
-      markDirty();
-      return;
-    }
-    if (selDown) {
-      if (!selMoved) {
-        // A click (not a pan): select the rectangle under the cursor, or deselect.
-        const hit = pickAt(e.clientX, e.clientY);
-        const next = hit ? hit.id : null;
-        if (next !== selectedId) {
-          selectedId = next;
-          sync();
-          markDirty();
-        }
-        log.input.debug('rect:select', { selectedId });
-      }
-      selDown = null;
-      selMoved = false;
-    }
-  };
-  canvas.addEventListener('pointerup', onPointerEnd);
-  canvas.addEventListener('pointercancel', onPointerEnd);
-
-  // Right-click: immediate delete of the rectangle under the cursor (no menu).
-  canvas.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    if (ui.locked) {
-      return; // fly mode handles right-click delete at the center
-    }
-    const hit = pickAt(e.clientX, e.clientY);
-    if (hit) {
-      deleteById(hit.id);
-      log.input.debug('rect:delete:context', { id: hit.id, total: rects.length });
-    }
-  });
-
-  window.addEventListener('keydown', (e) => {
-    // Esc cancels an in-progress rubber-band (no rectangle created).
-    if (e.key === 'Escape' && dragging) {
-      dragging = false;
-      preview = null;
-      anchor = null;
-      sync();
-      markDirty();
-      log.input.debug('rect:draw:esc');
-      return;
-    }
-    // Delete/Backspace removes the selected rectangle (ignored while typing in the panel).
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-      const target = e.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.tagName === 'INPUT' || target.tagName === 'SELECT')
-      ) {
-        return;
-      }
-      if (selectedId !== null) {
-        e.preventDefault();
-        const id = selectedId;
-        deleteById(id);
-        log.input.debug('rect:delete:key', { id, total: rects.length });
-      }
-    }
-  });
 
   const vertex = tgpu.vertexFn({
     in: { vid: d.builtin.vertexIndex, iid: d.builtin.instanceIndex },
@@ -566,17 +418,8 @@ export function createRectangles(opts: {
     out: d.vec4f,
   })((input) => {
     'use gpu';
-    const flags = input.flags;
-    // Decode discrete state without == (thresholds on the flag value).
-    // flags: 0 normal, 1 selected, 2 preview-valid, 3 preview-invalid, 4 ghost.
-    const gt05 = std.select(d.f32(0), d.f32(1), flags > 0.5);
-    const gt15 = std.select(d.f32(0), d.f32(1), flags > 1.5);
-    const gt25 = std.select(d.f32(0), d.f32(1), flags > 2.5);
-    const gt35 = std.select(d.f32(0), d.f32(1), flags > 3.5);
-    const isSelected = gt05 - gt15; // flags == 1
-    const isPreview = gt15 - gt35; // flags in {2, 3}
-    const isInvalid = gt25 - gt35; // flags == 3
-    const isGhost = gt35; // flags == 4
+    // flags: 0 = committed tile, 2 = pending placement (brighter outline).
+    const isPreview = std.select(d.f32(0), d.f32(1), input.flags > 1.5);
 
     // Distance to the nearest quad edge, in uv units → px via fwidth.
     const edge = std.min(
@@ -586,23 +429,11 @@ export function createRectangles(opts: {
     const w = std.fwidth(edge);
     const outline = d.f32(1) - std.smoothstep(d.f32(0), w * OUTLINE_PX, edge);
 
-    const isNormal = d.f32(1) - isSelected - isPreview - isGhost;
-    const fillA =
-      d.f32(FILL_ALPHA) * isNormal +
-      d.f32(SELECTED_FILL_ALPHA) * isSelected +
-      d.f32(PREVIEW_FILL_ALPHA) * isPreview +
-      d.f32(GHOST_FILL_ALPHA) * isGhost;
-    const outlineA =
-      d.f32(OUTLINE_ALPHA) +
-      isPreview * d.f32(PREVIEW_OUTLINE_BOOST) +
-      isSelected * d.f32(SELECTED_OUTLINE_BOOST) +
-      isGhost * d.f32(GHOST_OUTLINE_BOOST);
+    const fillA = std.mix(d.f32(FILL_ALPHA), d.f32(PREVIEW_FILL_ALPHA), isPreview);
+    const outlineA = d.f32(OUTLINE_ALPHA) + isPreview * d.f32(PREVIEW_OUTLINE_BOOST);
     const a = std.max(fillA, outline * outlineA);
 
-    // Base (untextured) look: white normally, red for an invalid preview.
-    const baseRGB = std.mix(d.vec3f(1, 1, 1), d.vec3f(1, 0.28, 0.28), isInvalid);
-
-    // Textured nodes: sample the media layer (uniform control flow — sample
+    // Textured tiles: sample the media layer (uniform control flow — sample
     // unconditionally at a clamped layer, then blend in only when tex ≥ 0).
     const layer = input.tex;
     const hasTex = std.select(d.f32(0), d.f32(1), layer > d.f32(-0.5));
@@ -617,7 +448,7 @@ export function createRectangles(opts: {
     const texRGB = std.mix(img.xyz, d.vec3f(1, 1, 1), oA); // whiten at the outline
 
     const finalA = std.mix(a, texA, hasTex);
-    const finalRGB = std.mix(baseRGB, texRGB, hasTex);
+    const finalRGB = std.mix(d.vec3f(1, 1, 1), texRGB, hasTex);
     // Premultiplied (matches the 'premultiplied' canvas + over blend).
     return d.vec4f(finalRGB * finalA, finalA);
   });
@@ -646,17 +477,21 @@ export function createRectangles(opts: {
     withMedia,
     rects,
     count,
+    cellAt,
+    centerCell,
     // Media:
     setImage,
+    setImageFromUrl,
     addRect,
-    // Fly-mode driving API (see fly.ts):
-    centerCell,
-    setGhost,
-    stampCenter,
-    beginCenterStroke,
-    sizeStrokeByCells,
-    commitCenterStroke,
-    cancelCenterStroke,
+    // Media placement (fly.ts / interactions.ts drive these):
+    beginPlacement,
+    setPlacementCenterCell,
+    setPendingImageFromUrl,
+    commitPlacement,
+    cancelPlacement,
+    isPlacing,
+    // Delete:
+    deleteAt,
     deleteAtCenter,
     // Persistence:
     serialize,
