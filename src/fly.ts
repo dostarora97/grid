@@ -129,6 +129,13 @@ export function attachFly(opts: {
     const [hw, hh] = halfExtents();
     stickX = clamp(stickX + e.movementX * tune.sensitivity, -hw, hw);
     stickY = clamp(stickY - e.movementY * tune.sensitivity, -hh, hh);
+    // Also clamp to the radius circle → the ring's reach = radius (capped to screen),
+    // and its edge = max speed. (radius defaults to the corner = full-screen reach.)
+    const mag = Math.hypot(stickX, stickY);
+    if (mag > tune.radiusPx) {
+      stickX = (stickX / mag) * tune.radiusPx;
+      stickY = (stickY / mag) * tune.radiusPx;
+    }
   });
 
   // Left = drop the carried tile; right = delete the tile under the center.

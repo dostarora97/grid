@@ -386,10 +386,11 @@ const flyTune: FlyTune = {
 const hud = document.createElement('div');
 hud.className = 'fly-hud';
 hud.innerHTML =
-  '<div class="fly-reticle"></div><div class="fly-stick"></div>' +
+  '<div class="fly-radius"></div><div class="fly-reticle"></div><div class="fly-stick"></div>' +
   '<div class="fly-hint">fly — move to steer · A = add media · click to drop · right-click delete · Space stop · Shift/Esc = grab</div>';
 document.body.append(hud);
 const hudStick = hud.querySelector<HTMLElement>('.fly-stick');
+const hudRadius = hud.querySelector<HTMLElement>('.fly-radius');
 
 const fly = attachFly({
   canvas,
@@ -477,7 +478,7 @@ function frame(now: number) {
   fly.tick(dt); // integrates velocity-steering + stroke while locked
   if (ui.locked && hudStick) {
     // Crosshair always shows while flying (it's the fixed placement reference). The
-    // ring + hint are gated by the toggle; the ring also hides while placing media.
+    // ring + radius circle + hint are gated by the toggle; they also hide while placing.
     hud.classList.toggle('hud', flyTune.showHud);
     const placing = fly.isPlacing();
     const showRing = flyTune.showHud && !placing;
@@ -485,6 +486,14 @@ function frame(now: number) {
     if (showRing) {
       const [sx, sy] = fly.stick();
       hudStick.style.transform = `translate(-50%, -50%) translate(${sx}px, ${-sy}px)`;
+    }
+    if (hudRadius) {
+      hudRadius.style.display = showRing ? '' : 'none';
+      if (showRing) {
+        const d = 2 * flyTune.radiusPx;
+        hudRadius.style.width = `${d}px`;
+        hudRadius.style.height = `${d}px`;
+      }
     }
   }
   if (dirty) {

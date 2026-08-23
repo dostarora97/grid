@@ -231,6 +231,17 @@ body {
   mix-blend-mode: screen;
 }
 
+/* Radius circle: the ring's reach = where max speed hits (sized in JS). */
+.fly-radius {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px dashed rgba(233, 237, 245, 0.28);
+  border-radius: 50%;
+  mix-blend-mode: screen;
+}
+
 /* Fly-mode hint bar (bottom-center). */
 .fly-hint {
   position: absolute;
