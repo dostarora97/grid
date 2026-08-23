@@ -242,6 +242,17 @@ body {
   mix-blend-mode: screen;
 }
 
+/* Dead-zone circle: inside it the velocity is zero (sized in JS). */
+.fly-deadzone {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 120, 120, 0.35);
+  border-radius: 50%;
+  mix-blend-mode: screen;
+}
+
 /* Fly-mode hint bar (bottom-center). */
 .fly-hint {
   position: absolute;

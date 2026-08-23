@@ -386,11 +386,13 @@ const flyTune: FlyTune = {
 const hud = document.createElement('div');
 hud.className = 'fly-hud';
 hud.innerHTML =
-  '<div class="fly-radius"></div><div class="fly-reticle"></div><div class="fly-stick"></div>' +
+  '<div class="fly-radius"></div><div class="fly-deadzone"></div>' +
+  '<div class="fly-reticle"></div><div class="fly-stick"></div>' +
   '<div class="fly-hint">fly — move to steer · A = add media · click to drop · right-click delete · Space stop · Shift/Esc = grab</div>';
 document.body.append(hud);
 const hudStick = hud.querySelector<HTMLElement>('.fly-stick');
 const hudRadius = hud.querySelector<HTMLElement>('.fly-radius');
+const hudDeadzone = hud.querySelector<HTMLElement>('.fly-deadzone');
 
 const fly = attachFly({
   canvas,
@@ -493,6 +495,14 @@ function frame(now: number) {
         const d = 2 * flyTune.radiusPx;
         hudRadius.style.width = `${d}px`;
         hudRadius.style.height = `${d}px`;
+      }
+    }
+    if (hudDeadzone) {
+      hudDeadzone.style.display = showRing ? '' : 'none';
+      if (showRing) {
+        const dz = 2 * flyTune.deadzonePx;
+        hudDeadzone.style.width = `${dz}px`;
+        hudDeadzone.style.height = `${dz}px`;
       }
     }
   }
