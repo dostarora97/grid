@@ -216,17 +216,6 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
   );
   addSlider(
     flySec,
-    'deadzone',
-    0,
-    60,
-    1,
-    () => flyTune.deadzonePx,
-    (v) => {
-      flyTune.deadzonePx = v;
-    },
-  );
-  addSlider(
-    flySec,
     'curve',
     1,
     4,

@@ -474,17 +474,25 @@ attachInputTelemetry(canvas);
 
 let lastTime = performance.now();
 let frameNo = 0;
+/** One grid cell's on-screen size in CSS px (center = focus = full scale). */
+function cellCssPx(): number {
+  return GRID.spacing * cam.zoom * (canvas.clientWidth / canvas.width);
+}
 function frame(now: number) {
   const dt = Math.min((now - lastTime) / 1000, 0.05); // clamp long stalls
   lastTime = now;
+  // The fly dead-zone tracks the grid: half a cell (= the crosshair arm), so the
+  // zero-velocity region and its circle always match the cell you're targeting.
+  if (ui.locked) {
+    flyTune.deadzonePx = cellCssPx() / 2;
+  }
   interactions.tick(dt); // advances the glide spring, marking dirty while moving
   fly.tick(dt); // integrates velocity-steering + stroke while locked
   if (ui.locked && hudStick) {
     // Crosshair always shows while flying (it's the fixed placement reference), sized
-    // to exactly one grid cell on screen (center = focus = full scale) so it frames
-    // the cell you're targeting — arms are half a cell. CSS px = G · zoom · (css/device).
+    // to exactly one grid cell on screen so it frames the target cell (arms = half a cell).
     if (hudReticle) {
-      const cell = GRID.spacing * cam.zoom * (canvas.clientWidth / canvas.width);
+      const cell = cellCssPx();
       hudReticle.style.width = `${cell}px`;
       hudReticle.style.height = `${cell}px`;
     }
