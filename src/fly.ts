@@ -10,6 +10,7 @@ type RectFlyApi = {
   commitPlacement: () => number | null;
   cancelPlacement: () => void;
   deleteAtCenter: () => void;
+  setGhostVisible: (v: boolean) => void;
 };
 
 /** Live copy of the FLY tunables (mutable so the panel/console can tweak feel). */
@@ -83,6 +84,18 @@ export function attachFly(opts: {
 
   let stickX = 0;
   let stickY = 0;
+  // Hysteresis state for the snap-target ghost: once shown, keep it until speed
+  // clearly rises again — so it doesn't strobe when hovering near a threshold.
+  let ghostStable = false;
+
+  /** Scalar pan speed (screen px/s) the stick would produce at magnitude `mag`. */
+  function speedAtMag(mag: number): number {
+    if (mag <= tune.deadzonePx) {
+      return 0;
+    }
+    const norm = Math.min((mag - tune.deadzonePx) / (tune.radiusPx - tune.deadzonePx), 1);
+    return tune.maxSpeedPx * norm ** tune.curveExp;
+  }
 
   function enter(): void {
     // Must be called from a user gesture. Request raw (unaccelerated) deltas.
@@ -196,7 +209,20 @@ export function attachFly(opts: {
       markDirty();
     }
     if (rects.isPlacing()) {
-      rects.setPlacementCenterWorld(cam.focusX, cam.focusY); // pinned to center as the world flies
+      rects.setPlacementCenterWorld(cam.focusX, cam.focusY); // pinned to center as it flies
+      // Hysteresis gate: show the snap-target ghost only when movement is "stable" —
+      // slower than the 1-cell-throw ε_low; hide it again above the 2-cell ε_high.
+      const speed = Math.hypot(vsx, vsy);
+      const eLow = speedAtMag(2 * tune.deadzonePx);
+      const eHigh = speedAtMag(4 * tune.deadzonePx);
+      if (speed <= eLow) {
+        ghostStable = true;
+      } else if (speed >= eHigh) {
+        ghostStable = false;
+      }
+      rects.setGhostVisible(ghostStable);
+    } else {
+      ghostStable = false;
     }
   }
 

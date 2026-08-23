@@ -27,6 +27,7 @@ const FILL_ALPHA = 0.1;
 const PREVIEW_FILL_ALPHA = 0.16;
 const OUTLINE_ALPHA = 0.7;
 const PREVIEW_OUTLINE_BOOST = 0.25;
+const GHOST_OUTLINE_ALPHA = 0.4;
 const OUTLINE_PX = 1.5;
 
 type Root = Awaited<ReturnType<typeof tgpu.init>>;
@@ -93,6 +94,9 @@ export function createRectangles(opts: {
   // CONTINUOUS world point (cx,cy) — fly → the focus, grab → the cursor — so it
   // glides smoothly with the crosshair/cursor and only snaps to a cell on commit.
   let pending: { cw: number; ch: number; cx: number; cy: number; layer: number } | null = null;
+  // Snap-target ghost: shown while carrying only when movement is "stable" (fly.ts
+  // gates this via hysteresis on speed) so it doesn't flicker cell-to-cell.
+  let ghostVisible = false;
 
   const buffer = root.createBuffer(d.arrayOf(RectGPU, CAP)).$usage('storage');
   const store = buffer.as('readonly');
@@ -235,6 +239,7 @@ export function createRectangles(opts: {
     nextId += 1;
     rects.push(r);
     pending = null;
+    ghostVisible = false;
     sync();
     markDirty();
     onChange?.();
@@ -248,6 +253,7 @@ export function createRectangles(opts: {
       return;
     }
     pending = null;
+    ghostVisible = false;
     sync();
     markDirty();
   }
@@ -255,13 +261,46 @@ export function createRectangles(opts: {
   /** Whether a placement is in progress. */
   const isPlacing = (): boolean => pending !== null;
 
-  /** Instances to draw = committed rects + the pending tile (if any). */
-  const count = (): number => Math.min(rects.length + (pending ? 1 : 0), CAP);
+  /** Show the snap-target ghost (fly.ts toggles this via a hysteresis "stable" gate). */
+  function setGhostVisible(v: boolean): void {
+    if (v === ghostVisible) {
+      return;
+    }
+    ghostVisible = v;
+    sync();
+    markDirty();
+  }
 
-  /** Mirror the committed rectangles (+ the pending placement tile) into the storage
-   * buffer. Called on create/delete and while a placement tile is being positioned. */
+  /** Instances to draw = committed rects + pending tile + snap-target ghost. */
+  const count = (): number =>
+    Math.min(rects.length + (pending ? 1 : 0) + (pending && ghostVisible ? 1 : 0), CAP);
+
+  /** Mirror the committed rectangles (+ pending tile, + snap-target ghost) into the
+   * storage buffer. Called on change and while a placement tile is being positioned. */
   function sync(): void {
     const g = GRID.spacing;
+    const extras: { min: d.v2f; max: d.v2f; flags: number; tex: number }[] = [];
+    if (pending) {
+      const hw = (pending.cw * g) / 2;
+      const hh = (pending.ch * g) / 2;
+      extras.push({
+        min: d.vec2f(pending.cx - hw, pending.cy - hh),
+        max: d.vec2f(pending.cx + hw, pending.cy + hh),
+        flags: 2, // brighter outline; textured shows the image
+        tex: pending.layer,
+      });
+      if (ghostVisible) {
+        // The snapped cell-block where the pending tile will land (a faint outline).
+        const x0 = Math.round(pending.cx / g - pending.cw / 2);
+        const y0 = Math.round(pending.cy / g - pending.ch / 2);
+        extras.push({
+          min: d.vec2f(x0 * g, y0 * g),
+          max: d.vec2f((x0 + pending.cw) * g, (y0 + pending.ch) * g),
+          flags: 5, // ghost: faint hollow outline, no fill, no texture
+          tex: -1,
+        });
+      }
+    }
     const data = Array.from({ length: CAP }, (_unused, i) => {
       if (i < rects.length) {
         const r = rects[i];
@@ -272,17 +311,9 @@ export function createRectangles(opts: {
           tex: r.tex ?? -1,
         };
       }
-      if (pending && i === rects.length) {
-        const hw = (pending.cw * g) / 2;
-        const hh = (pending.ch * g) / 2;
-        return {
-          min: d.vec2f(pending.cx - hw, pending.cy - hh),
-          max: d.vec2f(pending.cx + hw, pending.cy + hh),
-          flags: 2, // brighter outline; textured shows the image
-          tex: pending.layer,
-        };
-      }
-      return { min: d.vec2f(0, 0), max: d.vec2f(0, 0), flags: 0, tex: -1 };
+      return (
+        extras[i - rects.length] ?? { min: d.vec2f(0, 0), max: d.vec2f(0, 0), flags: 0, tex: -1 }
+      );
     });
     buffer.write(data);
   }
@@ -342,6 +373,7 @@ export function createRectangles(opts: {
       rects.reduce((m, r) => Math.max(m, r.id + 1), 1),
     );
     pending = null;
+    ghostVisible = false;
     sync();
     markDirty();
   }
@@ -351,6 +383,7 @@ export function createRectangles(opts: {
     rects.length = 0;
     nextId = 1;
     pending = null;
+    ghostVisible = false;
     sync();
     markDirty();
     onChange?.();
@@ -411,8 +444,11 @@ export function createRectangles(opts: {
     out: d.vec4f,
   })((input) => {
     'use gpu';
-    // flags: 0 = committed tile, 2 = pending placement (brighter outline).
-    const isPreview = std.select(d.f32(0), d.f32(1), input.flags > 1.5);
+    // flags: 0 = committed tile, 2 = pending placement, 5 = snap-target ghost.
+    const isPreview =
+      std.select(d.f32(0), d.f32(1), input.flags > 1.5) -
+      std.select(d.f32(0), d.f32(1), input.flags > 2.5);
+    const isGhost = std.select(d.f32(0), d.f32(1), input.flags > 4.5);
 
     // Distance to the nearest quad edge, in uv units → px via fwidth.
     const edge = std.min(
@@ -422,8 +458,14 @@ export function createRectangles(opts: {
     const w = std.fwidth(edge);
     const outline = d.f32(1) - std.smoothstep(d.f32(0), w * OUTLINE_PX, edge);
 
-    const fillA = std.mix(d.f32(FILL_ALPHA), d.f32(PREVIEW_FILL_ALPHA), isPreview);
-    const outlineA = d.f32(OUTLINE_ALPHA) + isPreview * d.f32(PREVIEW_OUTLINE_BOOST);
+    // Ghost = faint hollow outline (no fill, no texture); else fill + outline.
+    const fillA =
+      std.mix(d.f32(FILL_ALPHA), d.f32(PREVIEW_FILL_ALPHA), isPreview) * (d.f32(1) - isGhost);
+    const outlineA = std.mix(
+      d.f32(OUTLINE_ALPHA) + isPreview * d.f32(PREVIEW_OUTLINE_BOOST),
+      d.f32(GHOST_OUTLINE_ALPHA),
+      isGhost,
+    );
     const a = std.max(fillA, outline * outlineA);
 
     // Textured tiles: sample the media layer (uniform control flow — sample
@@ -483,6 +525,7 @@ export function createRectangles(opts: {
     commitPlacement,
     cancelPlacement,
     isPlacing,
+    setGhostVisible,
     // Delete:
     deleteAt,
     deleteAtCenter,
