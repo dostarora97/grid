@@ -509,9 +509,9 @@ function frame(now: number) {
     if (hudRadius) {
       hudRadius.style.display = showRing ? '' : 'none';
       if (showRing) {
-        const d = 2 * flyTune.radiusPx;
-        hudRadius.style.width = `${d}px`;
-        hudRadius.style.height = `${d}px`;
+        const diam = 2 * flyTune.radiusPx;
+        hudRadius.style.width = `${diam}px`;
+        hudRadius.style.height = `${diam}px`;
       }
     }
     if (hudDeadzone) {
