@@ -118,7 +118,7 @@ export const FLY = {
   /** Max pan speed, reached at the far corner, in *screen* px/s (÷zoom → world). */
   maxSpeedPx: 3200,
   /** Speed-curve exponent (>1 gives finer low-speed control). */
-  curveExp: 2,
+  curveExp: 1.5,
   /** Request raw, OS-acceleration-free deltas (Chrome `unadjustedMovement`). */
   unadjustedMovement: true,
   /** Show the fly ring + hint while flying (crosshair always shows). Off by default. */

@@ -203,13 +203,11 @@ body {
   display: block;
 }
 
-/* Center reticle: a crosshair marking the exact stamp point (= the focus). */
+/* Center reticle: a crosshair sized (in JS) to one grid cell — the target cell. */
 .fly-reticle {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 26px;
-  height: 26px;
   transform: translate(-50%, -50%);
   background:
     linear-gradient(#e8ecf5, #e8ecf5) center / 1.5px 100% no-repeat,

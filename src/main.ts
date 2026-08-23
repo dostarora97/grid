@@ -393,6 +393,7 @@ document.body.append(hud);
 const hudStick = hud.querySelector<HTMLElement>('.fly-stick');
 const hudRadius = hud.querySelector<HTMLElement>('.fly-radius');
 const hudDeadzone = hud.querySelector<HTMLElement>('.fly-deadzone');
+const hudReticle = hud.querySelector<HTMLElement>('.fly-reticle');
 
 const fly = attachFly({
   canvas,
@@ -479,8 +480,16 @@ function frame(now: number) {
   interactions.tick(dt); // advances the glide spring, marking dirty while moving
   fly.tick(dt); // integrates velocity-steering + stroke while locked
   if (ui.locked && hudStick) {
-    // Crosshair always shows while flying (it's the fixed placement reference). The
-    // ring + radius circle + hint are gated by the toggle; they also hide while placing.
+    // Crosshair always shows while flying (it's the fixed placement reference), sized
+    // to exactly one grid cell on screen (center = focus = full scale) so it frames
+    // the cell you're targeting — arms are half a cell. CSS px = G · zoom · (css/device).
+    if (hudReticle) {
+      const cell = GRID.spacing * cam.zoom * (canvas.clientWidth / canvas.width);
+      hudReticle.style.width = `${cell}px`;
+      hudReticle.style.height = `${cell}px`;
+    }
+    // The ring + radius + dead-zone circles + hint are gated by the toggle; they also
+    // hide while placing.
     hud.classList.toggle('hud', flyTune.showHud);
     const placing = fly.isPlacing();
     const showRing = flyTune.showHud && !placing;
