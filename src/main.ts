@@ -457,7 +457,7 @@ window.addEventListener('keydown', (e) => {
 const interactions = attachInteractions(canvas, cam, ui, markDirty, {
   isPlacing: rectangles.isPlacing,
   cellAt: rectangles.cellAt,
-  setPlacementCenterCell: rectangles.setPlacementCenterCell,
+  setPlacementCenterWorld: rectangles.setPlacementCenterWorld,
   commitPlacement: rectangles.commitPlacement,
   cancelPlacement: rectangles.cancelPlacement,
   deleteAt: rectangles.deleteAt,

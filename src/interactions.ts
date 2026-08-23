@@ -11,11 +11,11 @@ export type CameraState = { focusX: number; focusY: number; zoom: number };
  * (this module: drag to pan, cursor-carry to place, right-click to delete). */
 export type UiState = { locked: boolean };
 
-/** The grab-mode slice of the rectangles module (placement + delete by cursor cell). */
+/** The grab-mode slice of the rectangles module (placement + delete by cursor). */
 type GrabPlacement = {
   isPlacing: () => boolean;
   cellAt: (clientX: number, clientY: number) => [number, number];
-  setPlacementCenterCell: (cx: number, cy: number) => void;
+  setPlacementCenterWorld: (wx: number, wy: number) => void;
   commitPlacement: () => number | null;
   cancelPlacement: () => void;
   deleteAt: (cx: number, cy: number) => void;
@@ -78,10 +78,11 @@ export function attachInteractions(
 
   canvas.addEventListener('pointermove', (e) => {
     if (place.isPlacing()) {
-      // Carrying: the tile follows the cursor cell; hide the OS cursor (tile is it).
+      // Carrying: the tile glides with the cursor (continuous world); hide the OS
+      // cursor (the tile is it). It snaps to a cell only on drop.
       canvas.style.cursor = 'none';
-      const [cx, cy] = place.cellAt(e.clientX, e.clientY);
-      place.setPlacementCenterCell(cx, cy);
+      const [wx, wy] = worldAt(e.clientX, e.clientY);
+      place.setPlacementCenterWorld(wx, wy);
       return;
     }
     if (canvas.style.cursor === 'none') {

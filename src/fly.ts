@@ -6,8 +6,7 @@ import { CAMERA } from './tunables';
 /** The slice of the rectangles module fly mode drives. */
 type RectFlyApi = {
   isPlacing: () => boolean;
-  centerCell: () => [number, number];
-  setPlacementCenterCell: (cx: number, cy: number) => void;
+  setPlacementCenterWorld: (wx: number, wy: number) => void;
   commitPlacement: () => number | null;
   cancelPlacement: () => void;
   deleteAtCenter: () => void;
@@ -180,8 +179,7 @@ export function attachFly(opts: {
       markDirty();
     }
     if (rects.isPlacing()) {
-      const [cx, cy] = rects.centerCell();
-      rects.setPlacementCenterCell(cx, cy); // pinned to center as the world flies
+      rects.setPlacementCenterWorld(cam.focusX, cam.focusY); // pinned to center as the world flies
     }
   }
 

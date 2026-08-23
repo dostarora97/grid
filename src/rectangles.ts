@@ -89,10 +89,10 @@ export function createRectangles(opts: {
   const rects: Rect[] = [];
   let nextId = 1;
 
-  // Media placement: a pending tile being positioned before commit. Its top-left
-  // (x0,y0) tracks a "center cell" fed by the active nav mode (fly → screen center;
-  // grab → cursor). Overlap is allowed (collage).
-  let pending: { cw: number; ch: number; x0: number; y0: number; layer: number } | null = null;
+  // Media placement: a pending tile carried before commit. Its center is a
+  // CONTINUOUS world point (cx,cy) — fly → the focus, grab → the cursor — so it
+  // glides smoothly with the crosshair/cursor and only snaps to a cell on commit.
+  let pending: { cw: number; ch: number; cx: number; cy: number; layer: number } | null = null;
 
   const buffer = root.createBuffer(d.arrayOf(RectGPU, CAP)).$usage('storage');
   const store = buffer.as('readonly');
@@ -184,32 +184,20 @@ export function createRectangles(opts: {
   // --- Media placement: attach a tile, position it by the active mode's center
   //     cell (fly → screen center; grab → cursor), then commit. Overlap allowed. ---
 
-  /** Begin placing a `cw×ch` tile, centered on the current center (screen) cell. */
+  /** Begin carrying a `cw×ch` tile, centered on the current focus (world). */
   function beginPlacement(cw: number, ch: number): void {
-    const [cx, cy] = centerCell();
-    pending = {
-      cw,
-      ch,
-      x0: cx - Math.floor(cw / 2),
-      y0: cy - Math.floor(ch / 2),
-      layer: allocLayer(),
-    };
+    pending = { cw, ch, cx: cam.focusX, cy: cam.focusY, layer: allocLayer() };
     sync();
     markDirty();
   }
 
-  /** Position the pending tile so it's centered on cell (cx, cy). */
-  function setPlacementCenterCell(cx: number, cy: number): void {
-    if (!pending) {
+  /** Move the carried tile's center to a continuous world point (no snapping). */
+  function setPlacementCenterWorld(wx: number, wy: number): void {
+    if (!pending || (wx === pending.cx && wy === pending.cy)) {
       return;
     }
-    const nx = cx - Math.floor(pending.cw / 2);
-    const ny = cy - Math.floor(pending.ch / 2);
-    if (nx === pending.x0 && ny === pending.y0) {
-      return;
-    }
-    pending.x0 = nx;
-    pending.y0 = ny;
+    pending.cx = wx;
+    pending.cy = wy;
     sync();
     markDirty();
   }
@@ -228,17 +216,20 @@ export function createRectangles(opts: {
     }
   }
 
-  /** Commit the pending tile to a real media node; returns its id (null if none). */
+  /** Commit the carried tile to a real media node, snapped to the nearest cell block. */
   function commitPlacement(): number | null {
     if (!pending) {
       return null;
     }
+    const g = GRID.spacing;
+    const x0 = Math.round(pending.cx / g - pending.cw / 2);
+    const y0 = Math.round(pending.cy / g - pending.ch / 2);
     const r: Rect = {
       id: nextId,
-      x0: pending.x0,
-      y0: pending.y0,
-      x1: pending.x0 + pending.cw - 1,
-      y1: pending.y0 + pending.ch - 1,
+      x0,
+      y0,
+      x1: x0 + pending.cw - 1,
+      y1: y0 + pending.ch - 1,
       tex: pending.layer,
     };
     nextId += 1;
@@ -282,10 +273,12 @@ export function createRectangles(opts: {
         };
       }
       if (pending && i === rects.length) {
+        const hw = (pending.cw * g) / 2;
+        const hh = (pending.ch * g) / 2;
         return {
-          min: d.vec2f(pending.x0 * g, pending.y0 * g),
-          max: d.vec2f((pending.x0 + pending.cw) * g, (pending.y0 + pending.ch) * g),
-          flags: 2, // preview-valid look → brighter outline; textured shows the image
+          min: d.vec2f(pending.cx - hw, pending.cy - hh),
+          max: d.vec2f(pending.cx + hw, pending.cy + hh),
+          flags: 2, // brighter outline; textured shows the image
           tex: pending.layer,
         };
       }
@@ -485,7 +478,7 @@ export function createRectangles(opts: {
     addRect,
     // Media placement (fly.ts / interactions.ts drive these):
     beginPlacement,
-    setPlacementCenterCell,
+    setPlacementCenterWorld,
     setPendingImageFromUrl,
     commitPlacement,
     cancelPlacement,
