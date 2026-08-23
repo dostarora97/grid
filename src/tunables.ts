@@ -57,9 +57,9 @@ export const ADAPTIVE = {
  */
 export const TINT = {
   /** Overall tint strength; 0 = off. */
-  strength: 0.35,
+  strength: 0.25,
   /** World-space radius of the neutral halo around the origin (tanh scale). */
-  scale: 1500,
+  scale: 10000,
   up: [0.95, 0.2, 0.2],
   down: [0.2, 0.8, 0.3],
   left: [0.95, 0.85, 0.15],
