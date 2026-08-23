@@ -24,6 +24,12 @@ export type FlyTune = {
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
 
+/** Half the viewport (CSS px) — the crosshair sits at its center; the stick clamps
+ * to this rectangle, so the ring can reach any on-screen point (corners included). */
+function halfExtents(): [number, number] {
+  return [window.innerWidth / 2, window.innerHeight / 2];
+}
+
 /**
  * Pan speed (screen px/s) from a virtual joystick offset: exactly zero inside the
  * dead-zone, then ramping as `norm^curveExp` up to `maxSpeedPx` at `radiusPx`
@@ -75,12 +81,6 @@ export function attachFly(opts: {
 
   let stickX = 0;
   let stickY = 0;
-
-  /** Half the viewport (CSS px) — the crosshair sits at its center; the stick
-   * clamps to this rectangle, so the ring can reach any on-screen point. */
-  function halfExtents(): [number, number] {
-    return [window.innerWidth / 2, window.innerHeight / 2];
-  }
 
   function enter(): void {
     // Must be called from a user gesture. Request raw (unaccelerated) deltas.

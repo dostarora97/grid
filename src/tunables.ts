@@ -112,11 +112,11 @@ export const TAIL_MODE: Record<TailKind, number> = { rational: 0, tanh: 1, atan:
  */
 export const FLY = {
   /** Stick px gained per raw (unaccelerated) movement px. */
-  sensitivity: 0.6,
+  sensitivity: 2,
   /** Below this |stick|, velocity is exactly zero. */
   deadzonePx: 14,
   /** Max pan speed, reached at the far corner, in *screen* px/s (÷zoom → world). */
-  maxSpeedPx: 1600,
+  maxSpeedPx: 3200,
   /** Speed-curve exponent (>1 gives finer low-speed control). */
   curveExp: 2,
   /** Request raw, OS-acceleration-free deltas (Chrome `unadjustedMovement`). */

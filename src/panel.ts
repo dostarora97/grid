@@ -185,7 +185,7 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
     flySec,
     'sens',
     0.1,
-    2,
+    4,
     0.05,
     () => flyTune.sensitivity,
     (v) => {
@@ -196,7 +196,7 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
     flySec,
     'max spd',
     200,
-    4000,
+    6400,
     50,
     () => flyTune.maxSpeedPx,
     (v) => {
