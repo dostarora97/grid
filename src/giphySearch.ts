@@ -96,6 +96,8 @@ export function createGiphySearch(opts: { onPick: (result: GiphyResult) => void 
     open = next;
     container.classList.toggle('on', open);
     if (open) {
+      input.value = ''; // fresh search each time
+      results.replaceChildren();
       input.focus();
     }
   }

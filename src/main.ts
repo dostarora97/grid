@@ -456,6 +456,7 @@ window.addEventListener('keydown', (e) => {
       fly.enter();
     }
   } else if ((e.key === 'a' || e.key === 'A') && !e.repeat) {
+    e.preventDefault(); // don't let the "a" leak into the search box we're focusing
     openPicker();
   } else if (e.key === 'Escape' && !ui.locked && rectangles.isPlacing()) {
     rectangles.cancelPlacement(); // grab-carry cancel (fly-carry cancel is Esc→unlock)
