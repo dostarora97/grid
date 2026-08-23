@@ -281,16 +281,9 @@ export function createRectangles(opts: {
     const g = GRID.spacing;
     const extras: { min: d.v2f; max: d.v2f; flags: number; tex: number }[] = [];
     if (pending) {
-      const hw = (pending.cw * g) / 2;
-      const hh = (pending.ch * g) / 2;
-      extras.push({
-        min: d.vec2f(pending.cx - hw, pending.cy - hh),
-        max: d.vec2f(pending.cx + hw, pending.cy + hh),
-        flags: 2, // brighter outline; textured shows the image
-        tex: pending.layer,
-      });
+      // Ghost first → drawn BEHIND the media, so the image covers the ghost's lines
+      // where they overlap; only the snap-offset edge peeks out.
       if (ghostVisible) {
-        // The snapped cell-block where the pending tile will land (a faint outline).
         const x0 = Math.round(pending.cx / g - pending.cw / 2);
         const y0 = Math.round(pending.cy / g - pending.ch / 2);
         extras.push({
@@ -300,6 +293,14 @@ export function createRectangles(opts: {
           tex: -1,
         });
       }
+      const hw = (pending.cw * g) / 2;
+      const hh = (pending.ch * g) / 2;
+      extras.push({
+        min: d.vec2f(pending.cx - hw, pending.cy - hh),
+        max: d.vec2f(pending.cx + hw, pending.cy + hh),
+        flags: 2, // brighter outline; textured shows the image (drawn on top of the ghost)
+        tex: pending.layer,
+      });
     }
     const data = Array.from({ length: CAP }, (_unused, i) => {
       if (i < rects.length) {
