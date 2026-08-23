@@ -15,6 +15,8 @@ type RectFlyApi = {
 /** Live copy of the FLY tunables (mutable so the panel/console can tweak feel). */
 export type FlyTune = {
   sensitivity: number;
+  /** Stick distance at which max speed is reached (default = viewport corner). */
+  radiusPx: number;
   deadzonePx: number;
   maxSpeedPx: number;
   curveExp: number;
@@ -170,10 +172,9 @@ export function attachFly(opts: {
     }
   });
 
-  /** Pan speed (screen px/s) from the stick: dead-zone → 0, corner = max. */
+  /** Pan speed (screen px/s) from the stick: dead-zone → 0, max speed at `radiusPx`. */
   function velocity(): [number, number] {
-    const [hw, hh] = halfExtents();
-    return flyVelocity(stickX, stickY, Math.hypot(hw, hh), tune);
+    return flyVelocity(stickX, stickY, tune.radiusPx, tune);
   }
 
   /** Advance fly by `dt`s: integrate the focus; keep any carried tile pinned to center. */

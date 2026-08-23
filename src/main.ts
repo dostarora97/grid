@@ -374,8 +374,12 @@ if (typeof window !== 'undefined') {
 }
 
 // --- Fly mode (experiment): velocity steering under pointer lock. -------------
-// Live tunables (mutable copy so the panel/console can tune the feel).
-const flyTune: FlyTune = { ...FLY };
+// Live tunables (mutable copy so the panel/console can tune the feel). radiusPx
+// (throw to reach max speed) defaults to the viewport corner = full-screen reach.
+const flyTune: FlyTune = {
+  ...FLY,
+  radiusPx: Math.hypot(window.innerWidth / 2, window.innerHeight / 2),
+};
 
 // HUD: a center reticle + a stick indicator (the real cursor is hidden while
 // locked, so this is the only feedback for "where is the joystick / center").

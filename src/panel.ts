@@ -194,6 +194,17 @@ export function createSettingsPanel(opts: PanelOptions): { refresh: () => void }
   );
   addSlider(
     flySec,
+    'radius',
+    100,
+    Math.round(Math.hypot(window.innerWidth / 2, window.innerHeight / 2)),
+    20,
+    () => flyTune.radiusPx,
+    (v) => {
+      flyTune.radiusPx = v;
+    },
+  );
+  addSlider(
+    flySec,
     'max spd',
     200,
     6400,
