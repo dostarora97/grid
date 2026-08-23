@@ -15,7 +15,6 @@ type RectFlyApi = {
 /** Live copy of the FLY tunables (mutable so the panel/console can tweak feel). */
 export type FlyTune = {
   sensitivity: number;
-  radiusPx: number;
   deadzonePx: number;
   maxSpeedPx: number;
   curveExp: number;
@@ -27,19 +26,21 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v
 
 /**
  * Pan speed (screen px/s) from a virtual joystick offset: exactly zero inside the
- * dead-zone, then ramping as `norm^curveExp` up to `maxSpeedPx` at the clamp
- * radius, aimed along the stick direction. Pure (no lock/DOM) so it's unit-tested.
+ * dead-zone, then ramping as `norm^curveExp` up to `maxSpeedPx` at `radiusPx`
+ * (the far corner = half-diagonal), aimed along the stick direction. Pure (no
+ * lock/DOM) so it's unit-tested.
  */
 export function flyVelocity(
   stickX: number,
   stickY: number,
-  tune: Pick<FlyTune, 'deadzonePx' | 'radiusPx' | 'maxSpeedPx' | 'curveExp'>,
+  radiusPx: number,
+  tune: Pick<FlyTune, 'deadzonePx' | 'maxSpeedPx' | 'curveExp'>,
 ): [number, number] {
   const mag = Math.hypot(stickX, stickY);
   if (mag <= tune.deadzonePx) {
     return [0, 0];
   }
-  const norm = Math.min((mag - tune.deadzonePx) / (tune.radiusPx - tune.deadzonePx), 1);
+  const norm = Math.min((mag - tune.deadzonePx) / (radiusPx - tune.deadzonePx), 1);
   const speed = tune.maxSpeedPx * norm ** tune.curveExp;
   return [(stickX / mag) * speed, (stickY / mag) * speed];
 }
@@ -74,6 +75,12 @@ export function attachFly(opts: {
 
   let stickX = 0;
   let stickY = 0;
+
+  /** Half the viewport (CSS px) — the crosshair sits at its center; the stick
+   * clamps to this rectangle, so the ring can reach any on-screen point. */
+  function halfExtents(): [number, number] {
+    return [window.innerWidth / 2, window.innerHeight / 2];
+  }
 
   function enter(): void {
     // Must be called from a user gesture. Request raw (unaccelerated) deltas.
@@ -117,8 +124,9 @@ export function attachFly(opts: {
     if (!ui.locked) {
       return;
     }
-    stickX = clamp(stickX + e.movementX * tune.sensitivity, -tune.radiusPx, tune.radiusPx);
-    stickY = clamp(stickY - e.movementY * tune.sensitivity, -tune.radiusPx, tune.radiusPx);
+    const [hw, hh] = halfExtents();
+    stickX = clamp(stickX + e.movementX * tune.sensitivity, -hw, hw);
+    stickY = clamp(stickY - e.movementY * tune.sensitivity, -hh, hh);
   });
 
   // Left = drop the carried tile; right = delete the tile under the center.
@@ -162,9 +170,10 @@ export function attachFly(opts: {
     }
   });
 
-  /** Pan speed (screen px/s) from the stick: dead-zone → 0, ramps as norm^curveExp. */
+  /** Pan speed (screen px/s) from the stick: dead-zone → 0, corner = max. */
   function velocity(): [number, number] {
-    return flyVelocity(stickX, stickY, tune);
+    const [hw, hh] = halfExtents();
+    return flyVelocity(stickX, stickY, Math.hypot(hw, hh), tune);
   }
 
   /** Advance fly by `dt`s: integrate the focus; keep any carried tile pinned to center. */
